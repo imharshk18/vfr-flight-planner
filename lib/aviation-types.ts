@@ -13,11 +13,16 @@ export type CloudDeck = {
 };
 
 export type StationWeather = {
+  source?: "METAR" | "TAF" | "demo" | "cached" | "unavailable";
+  validTime?: string;
+  forecastNote?: string;
   icao: string;
   rawMetar: string;
   flightCategory: "VFR" | "MVFR" | "IFR" | "LIFR";
   windSpeedKt: number;
   windDirDeg: number;
+  windGustKt?: number;
+  visibilitySm?: number;
   tempC: number;
   dewpointC: number;
   altimeterInHg: number;
@@ -73,6 +78,17 @@ export type VfrCorridorDecision = {
   reserveFuelRemainingGal: number;
   totalRampWeightLbs: number;
   weightStatus: "LEGAL" | "OVERWEIGHT";
+  /** Briefing highlights for ForeFlight-style summary */
+  briefingHighlights?: string[];
+  hazardCounts?: {
+    pireps: number;
+    airmets: number;
+    sigmets: number;
+    tfrs: number;
+    severePireps: number;
+  };
+  recommendedDepRunway?: string;
+  recommendedArrRunway?: string;
 };
 
 export type TfrZone = {

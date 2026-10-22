@@ -1,20 +1,24 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
+import { JetBrains_Mono, Syne } from "next/font/google";
+import "./cockpit.css";
+import "./cockpit-hud.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const syne = Syne({
+  variable: "--font-display",
   subsets: ["latin"],
+  weight: ["500", "600", "700", "800"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrains = JetBrains_Mono({
+  variable: "--font-data",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
-  title: "AeroTwin 3D - VFR Corridor Engine",
-  description: "Real-time 3D Cross-Country Flight Corridor and Go/No-Go Decision Engine for General Aviation VFR pilots",
+  title: "AeroTwin · Flight Rehearsal",
+  description:
+    "Interactive 3D VFR corridor rehearsal with Go/No-Go decisioning for general aviation",
 };
 
 export default function RootLayout({
@@ -23,11 +27,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
-    >
-      <body className="h-full overflow-hidden bg-[#070709]">{children}</body>
+    <html lang="en" className={`${syne.variable} ${jetbrains.variable} h-full`}>
+      <body className="h-full overflow-hidden bg-[#050709]">{children}</body>
     </html>
   );
 }

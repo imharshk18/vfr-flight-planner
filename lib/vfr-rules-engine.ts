@@ -9,6 +9,7 @@ import type {
   AirportLocation,
 } from "./aviation-types";
 import { haversineNm, computeCourseDeg } from "./aviation-api";
+import type { HazardAdvisory, PirepReport, RunwayRecommendation } from "./aviation-intel";
 
 // ---- Weight and Balance ----
 
@@ -109,11 +110,20 @@ export interface RulesEngineInput {
   wb: WeightAndBalanceState;
   originWeather: StationWeather;
   destWeather: StationWeather;
+  /** Prefer forecast-at-ETA for destination category checks when provided */
+  destForecastWeather?: StationWeather;
+  originForecastWeather?: StationWeather;
   terrainProfile: TerrainPoint[];
   cruiseAltitudeFt: number;
   tfrs: TfrZone[];
   destRunwayData: AirportRunwayData;
   simulateMarineLayerBurnOff?: boolean;
+  pireps?: PirepReport[];
+  advisories?: HazardAdvisory[];
+  depRunway?: RunwayRecommendation;
+  arrRunway?: RunwayRecommendation;
+  profileTimeMin?: number;
+  profileAvgGs?: number;
 }
 
 export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision {
@@ -124,16 +134,29 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
     wb,
     originWeather,
     destWeather,
+    destForecastWeather,
+    originForecastWeather,
     terrainProfile,
     cruiseAltitudeFt,
     tfrs,
     destRunwayData,
     simulateMarineLayerBurnOff = false,
+    pireps = [],
+    advisories = [],
+    depRunway,
+    arrRunway,
+    profileTimeMin,
+    profileAvgGs,
   } = input;
+
+  // Use forecast-at-time for terminal VFR category when available
+  const depWx = originForecastWeather || originWeather;
+  const arrWx = destForecastWeather || destWeather;
 
   const blockers: string[] = [];
   const cautions: string[] = [];
   const citations: string[] = [];
+  const briefingHighlights: string[] = [];
 
   // ---- 1. Weight and Balance ----
   const totalRampWeightLbs = computeRampWeight(aircraft, wb);
@@ -181,7 +204,7 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
     terrainProfile.length > 1
       ? Math.max(0, maxTerrainElevFt - origin.elevationFt)
       : 0;
-  const distNm = haversineNm(origin.lat, origin.lon, destination.lat, destination.lon);
+  const distNm = terrainProfile.at(-1)?.distanceNm || haversineNm(origin.lat, origin.lon, destination.lat, destination.lon);
   const requiredClimbFpm =
     distNm > 0 ? (terrainClimb / ((distNm * 0.5) / (aircraft.cruiseTasKt / 60))) : 0;
 
@@ -196,20 +219,38 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
     );
   }
 
-  // ---- 5. Cloud Clearance (14 CFR 91.155) ----
+  // ---- 5. Cloud Clearance (14 CFR 91.155) using forecast-at-ETA when available ----
   const effectiveDestWeather = simulateMarineLayerBurnOff
     ? {
-        ...destWeather,
-        ceilingAglFt: destWeather.ceilingAglFt
-          ? destWeather.ceilingAglFt + 2000
+        ...arrWx,
+        ceilingAglFt: arrWx.ceilingAglFt
+          ? arrWx.ceilingAglFt + 2000
           : null,
-        cloudDecks: destWeather.cloudDecks.map((d) => ({
+        cloudDecks: arrWx.cloudDecks.map((d) => ({
           ...d,
           baseAglFt: d.coverage === "SKC" ? d.baseAglFt : d.baseAglFt + 2000,
           baseMslFt: d.coverage === "SKC" ? d.baseMslFt : d.baseMslFt + 2000,
         })),
       }
-    : destWeather;
+    : arrWx;
+
+  if (arrWx.flightCategory === "IFR" || arrWx.flightCategory === "LIFR") {
+    blockers.push(
+      `Arrival forecast category ${arrWx.flightCategory} (${arrWx.source || "wx"} at ETA). VFR arrival not supported under basic minima.`
+    );
+    citations.push("14 CFR 91.155 - Basic VFR Weather Minimums");
+  } else if (arrWx.flightCategory === "MVFR") {
+    cautions.push(
+      `Arrival forecast is MVFR (${arrWx.source || "wx"}). Marginal VFR; have an IFR or divert plan.`
+    );
+  }
+
+  if (depWx.flightCategory === "IFR" || depWx.flightCategory === "LIFR") {
+    blockers.push(
+      `Departure forecast category ${depWx.flightCategory}. VFR departure not supported.`
+    );
+    citations.push("14 CFR 91.155 - Basic VFR Weather Minimums");
+  }
 
   const patternAltFt = destination.elevationFt + 1000;
   let cloudBufferFt = 99999;
@@ -230,10 +271,13 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
     }
   }
 
-  // Check if cruise altitude penetrates ceiling
-  const ceilingDecks = [...originWeather.cloudDecks, ...destWeather.cloudDecks].filter(
-    (d) => d.coverage === "BKN" || d.coverage === "OVC"
-  );
+  // Check if cruise altitude penetrates ceiling (obs + forecast decks)
+  const ceilingDecks = [
+    ...depWx.cloudDecks,
+    ...arrWx.cloudDecks,
+    ...originWeather.cloudDecks,
+    ...destWeather.cloudDecks,
+  ].filter((d) => d.coverage === "BKN" || d.coverage === "OVC");
   for (const deck of ceilingDecks) {
     if (deck.baseMslFt > 0 && cruiseAltitudeFt > deck.baseMslFt - 500) {
       blockers.push(
@@ -246,16 +290,19 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
 
   // ---- 6. Fuel and Reserves (14 CFR 91.151) ----
   const courseDeg = computeCourseDeg(origin.lat, origin.lon, destination.lat, destination.lon);
-  const avgWindSpeedKt = (originWeather.windSpeedKt + destWeather.windSpeedKt) / 2;
-  const avgWindDirDeg = originWeather.windDirDeg;
+  const avgWindSpeedKt = (depWx.windSpeedKt + arrWx.windSpeedKt) / 2;
+  const avgWindDirDeg = depWx.windDirDeg;
   const { headwindKt, crosswindKt } = computeWindComponents(
     avgWindSpeedKt,
     avgWindDirDeg,
     courseDeg
   );
 
-  const groundSpeedKt = Math.max(30, aircraft.cruiseTasKt - headwindKt);
-  const flightTimeHours = distNm / groundSpeedKt;
+  const groundSpeedKt = Math.max(
+    30,
+    profileAvgGs ?? aircraft.cruiseTasKt - headwindKt
+  );
+  const flightTimeHours = (profileTimeMin ? profileTimeMin / 60 : distNm / groundSpeedKt);
   const estimatedTimeEnrouteMin = Math.round(flightTimeHours * 60);
   const fuelRequiredGal = flightTimeHours * aircraft.fuelBurnGph;
   const dayVfrReserveGal = 0.5 * aircraft.fuelBurnGph;
@@ -273,16 +320,28 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
     );
   }
 
-  // ---- 7. Crosswind Check ----
-  if (crosswindKt > aircraft.maxCrosswindKt) {
+  // ---- 7. Crosswind / runway recommendation ----
+  const arrXw = arrRunway?.crosswindKt ?? crosswindKt;
+  if (arrRunway && !arrRunway.legal) {
     blockers.push(
-      `Crosswind component ${crosswindKt.toFixed(1)} kt exceeds aircraft maximum demonstrated crosswind of ${aircraft.maxCrosswindKt} kt`
+      `Arrival runway ${arrRunway.designation}: crosswind ${arrRunway.crosswindKt} kt exceeds max demonstrated ${aircraft.maxCrosswindKt} kt`
     );
     citations.push("POH Maximum Demonstrated Crosswind Limitation");
-  } else if (crosswindKt > aircraft.maxCrosswindKt * 0.75) {
-    cautions.push(
-      `Crosswind component ${crosswindKt.toFixed(1)} kt approaching aircraft maximum of ${aircraft.maxCrosswindKt} kt.`
+  } else if (arrXw > aircraft.maxCrosswindKt) {
+    blockers.push(
+      `Crosswind component ${arrXw.toFixed(1)} kt exceeds aircraft maximum demonstrated crosswind of ${aircraft.maxCrosswindKt} kt`
     );
+    citations.push("POH Maximum Demonstrated Crosswind Limitation");
+  } else if (arrXw > aircraft.maxCrosswindKt * 0.75) {
+    cautions.push(
+      `Arrival crosswind ${arrXw.toFixed(1)} kt approaching max demonstrated ${aircraft.maxCrosswindKt} kt.`
+    );
+  }
+  if (depRunway) {
+    briefingHighlights.push(`Dep Rwy ${depRunway.designation}: ${depRunway.reason}`);
+  }
+  if (arrRunway) {
+    briefingHighlights.push(`Arr Rwy ${arrRunway.designation}: ${arrRunway.reason}`);
   }
 
   // ---- 8. TFR Conflict Check ----
@@ -301,23 +360,64 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
   // ---- 9. Runway Length Check at Density Altitude ----
   const destDA = computeDensityAlt(
     destination.elevationFt,
-    destWeather.altimeterInHg,
-    destWeather.tempC
+    arrWx.altimeterInHg,
+    arrWx.tempC
   );
   const landingRollFt = computeLandingDistanceFt(aircraft, destDA);
-  const availableRunwayFt = destRunwayData.primaryRunwayLength;
+  const availableRunwayFt = arrRunway?.lengthFt || destRunwayData.primaryRunwayLength;
   const runwayUsageRatio = landingRollFt / availableRunwayFt;
 
   if (runwayUsageRatio > 0.8) {
     blockers.push(
-      `Runway length violation: estimated landing roll ${landingRollFt.toLocaleString()} ft exceeds 80% of available ${availableRunwayFt.toLocaleString()} ft runway at density altitude ${destDA.toLocaleString()} ft`
+      `Runway length violation: estimated landing roll ${landingRollFt.toLocaleString()} ft exceeds 80% of available ${availableRunwayFt.toLocaleString()} ft on Rwy ${arrRunway?.designation || "primary"} at DA ${destDA.toLocaleString()} ft`
     );
     citations.push("POH Runway Performance - 80% Runway Buffer Violation");
   } else if (runwayUsageRatio > 0.6) {
     cautions.push(
-      `Runway margin tight: landing roll estimated at ${landingRollFt.toLocaleString()} ft on ${availableRunwayFt.toLocaleString()} ft runway (${Math.round(runwayUsageRatio * 100)}% used) at density altitude ${destDA.toLocaleString()} ft.`
+      `Runway margin tight: landing roll ${landingRollFt.toLocaleString()} ft on ${availableRunwayFt.toLocaleString()} ft (${Math.round(runwayUsageRatio * 100)}% used).`
     );
   }
+
+  // ---- 10. PIREPs / AIRMETs / SIGMETs ----
+  const severePireps = pireps.filter((p) => p.severity === "severe");
+  const cautionPireps = pireps.filter((p) => p.severity === "caution");
+  for (const p of severePireps.slice(0, 3)) {
+    blockers.push(`Severe PIREP near corridor: ${p.summary}`);
+    citations.push("PIREP - Pilot Weather Report");
+  }
+  for (const p of cautionPireps.slice(0, 3)) {
+    cautions.push(`PIREP: ${p.summary} (${p.ageHours}h ago)`);
+  }
+
+  const sigmets = advisories.filter((a) => a.product === "SIGMET" && a.intersectsRoute);
+  for (const s of sigmets.slice(0, 3)) {
+    blockers.push(`SIGMET along route: ${s.summary}`);
+    citations.push("SIGMET - Significant Meteorological Information");
+  }
+
+  const airmets = advisories.filter(
+    (a) => a.product === "G-AIRMET" && a.intersectsRoute && /IFR|ICE|TURB|MTN/i.test(a.hazard)
+  );
+  for (const a of airmets.slice(0, 4)) {
+    if (/IFR/i.test(a.hazard)) {
+      blockers.push(`G-AIRMET IFR near corridor: ${a.summary}`);
+      citations.push("G-AIRMET - Graphical AIRMET");
+    } else {
+      cautions.push(`G-AIRMET ${a.hazard}: ${a.summary}`);
+    }
+  }
+
+  const cwas = advisories.filter((a) => a.product === "CWA" && a.intersectsRoute);
+  for (const c of cwas.slice(0, 2)) {
+    cautions.push(c.summary);
+  }
+
+  briefingHighlights.push(
+    `Wx sources: METAR + TAF (${depWx.source}/${arrWx.source}) · ${pireps.length} PIREPs · ${advisories.filter((a) => a.product === "G-AIRMET").length} G-AIRMETs · ${sigmets.length} SIGMETs`
+  );
+  briefingHighlights.push(
+    `Dep ${depWx.flightCategory} · Arr ${arrWx.flightCategory} · Ceiling buf ${cloudBufferFt === 99999 ? "CLR" : `${Math.round(cloudBufferFt)} ft`}`
+  );
 
   // ---- Verdict ----
   let verdict: VfrCorridorDecision["verdict"];
@@ -325,13 +425,13 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
 
   if (blockers.length > 0) {
     verdict = "NO_GO";
-    summary = `Flight BLOCKED: ${blockers.length} regulatory violation${blockers.length > 1 ? "s" : ""} detected. Do not depart.`;
+    summary = `NO-GO: ${blockers.length} hard stop${blockers.length > 1 ? "s" : ""} from forecast, hazards, or performance. Do not depart VFR as planned.`;
   } else if (cautions.length >= 2) {
     verdict = "MARGINAL";
-    summary = `Flight MARGINAL: ${cautions.length} caution item${cautions.length > 1 ? "s" : ""} require pilot-in-command judgment. Proceed with awareness.`;
+    summary = `MARGINAL: ${cautions.length} caution items (TAF/PIREPs/AIRMETs/performance). PIC judgment required.`;
   } else {
     verdict = "GO";
-    summary = "Flight APPROVED: All VFR regulatory checks passed. Standard pre-flight diligence required.";
+    summary = "GO: Live METAR/TAF, hazard products, terrain, fuel, and runway checks support VFR as planned.";
   }
 
   return {
@@ -344,9 +444,19 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
     cloudBufferFt: cloudBufferFt === 99999 ? 99999 : Math.round(cloudBufferFt),
     calculatedClimbRateFpm,
     headwindComponentKt: headwindKt,
-    crosswindComponentKt: crosswindKt,
+    crosswindComponentKt: arrXw,
     groundSpeedKt: Math.round(groundSpeedKt),
     estimatedTimeEnrouteMin,
+    briefingHighlights,
+    hazardCounts: {
+      pireps: pireps.length,
+      airmets: advisories.filter((a) => a.product === "G-AIRMET").length,
+      sigmets: sigmets.length,
+      tfrs: advisories.filter((a) => a.product === "TFR" && a.intersectsRoute).length,
+      severePireps: severePireps.length,
+    },
+    recommendedDepRunway: depRunway?.designation,
+    recommendedArrRunway: arrRunway?.designation,
     fuelRequiredGal: Math.round(fuelRequiredGal * 10) / 10,
     reserveFuelRemainingGal: Math.round(reserveFuelRemainingGal * 10) / 10,
     totalRampWeightLbs: Math.round(totalRampWeightLbs),
@@ -356,35 +466,63 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
 
 // ---- Auto-optimize cruise altitude ----
 
+/** VFR cruise (14 CFR 91.159): eastbound odd+500, westbound even+500. */
+export function nextVfrCruiseAltitude(minFt: number, courseDeg: number): number {
+  const eastbound = ((courseDeg % 360) + 360) % 360 < 180;
+  let alt = Math.max(3500, Math.ceil(minFt / 500) * 500);
+  for (let i = 0; i < 40; i++) {
+    const thousands = Math.floor(alt / 1000);
+    const isOdd = thousands % 2 === 1;
+    const isPlus500 = alt % 1000 === 500;
+    if (isPlus500 && ((eastbound && isOdd) || (!eastbound && !isOdd))) return alt;
+    alt += 500;
+  }
+  return alt;
+}
+
 export function autoOptimizeCruiseAltitude(
   terrainProfile: TerrainPoint[],
   originWeather: StationWeather,
   destWeather: StationWeather,
   destination: { elevationFt: number },
-  aircraft: AircraftProfile
+  origin: { elevationFt: number },
+  aircraft: AircraftProfile,
+  courseDeg = 90,
+  distanceNm = 30
 ): number {
   const maxObstacleFt =
     terrainProfile.length > 0
       ? Math.max(...terrainProfile.map((p) => p.elevationFt))
       : 0;
-  const minForTerrain = maxObstacleFt + 1000;
+  // Legal floor is +1,000 ft (91.119). Practical XC floor is higher.
+  const legalTerrain = maxObstacleFt + 1000;
+  const practicalTerrain = maxObstacleFt + 1500;
+  const routeFloor = distanceNm < 25 ? 3500 : distanceNm < 80 ? 4500 : 5500;
+  const minPractical = Math.max(legalTerrain, practicalTerrain, routeFloor);
 
-  // Find lowest ceiling across both stations
-  const allCeilings = [
-    ...(originWeather.ceilingAglFt !== null
-      ? [originWeather.ceilingAglFt + (originWeather.densityAltitudeFt > 0 ? 0 : 0)]
-      : []),
-    ...(destWeather.ceilingAglFt !== null
-      ? [destWeather.ceilingAglFt + destination.elevationFt]
-      : []),
-  ];
+  // Snap to hemispheric VFR altitude. If clouds make that illegal, keep the
+  // terrain-safe VFR altitude and let the rules engine flag the cloud conflict.
+  let optimal = nextVfrCruiseAltitude(minPractical, courseDeg);
 
-  let minForClouds = aircraft.serviceCeilingFt;
-  if (allCeilings.length > 0) {
-    const lowestCeilingMsl = Math.min(...allCeilings);
-    minForClouds = lowestCeilingMsl - 500;
+  const ceilingMslValues: number[] = [];
+  if (originWeather.ceilingAglFt !== null) {
+    ceilingMslValues.push(originWeather.ceilingAglFt + origin.elevationFt);
+  }
+  if (destWeather.ceilingAglFt !== null) {
+    ceilingMslValues.push(destWeather.ceilingAglFt + destination.elevationFt);
+  }
+  if (ceilingMslValues.length > 0) {
+    const cloudCap = Math.min(...ceilingMslValues) - 500;
+    if (cloudCap >= minPractical) {
+      optimal = nextVfrCruiseAltitude(minPractical, courseDeg);
+      while (optimal > cloudCap && optimal - 1000 >= minPractical) {
+        optimal -= 1000;
+      }
+      if (optimal > cloudCap) {
+        optimal = nextVfrCruiseAltitude(minPractical, courseDeg);
+      }
+    }
   }
 
-  const optimal = Math.round(Math.min(minForTerrain, minForClouds) / 500) * 500;
-  return Math.max(1500, Math.min(13500, optimal));
+  return Math.min(aircraft.serviceCeilingFt, Math.min(13500, optimal));
 }

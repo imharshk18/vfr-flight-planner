@@ -11,6 +11,7 @@ import type {
 
 const AIRPORT_DB: Record<string, AirportLocation> = {
   KSQL: { icao: "KSQL", name: "San Carlos Airport", lat: 37.5119, lon: -122.2494, elevationFt: 5 },
+  KHWD: { icao: "KHWD", name: "Hayward Executive Airport", lat: 37.6591, lon: -122.122, elevationFt: 52 },
   KMRY: { icao: "KMRY", name: "Monterey Regional Airport", lat: 36.587, lon: -121.8429, elevationFt: 257 },
   O22: { icao: "O22", name: "Columbia Airport", lat: 38.0314, lon: -120.4147, elevationFt: 2118 },
   KPAO: { icao: "KPAO", name: "Palo Alto Airport", lat: 37.4611, lon: -122.115, elevationFt: 4 },
@@ -144,6 +145,14 @@ const RUNWAY_DB: Record<string, AirportRunwayData> = {
     ],
     primaryRunwayLength: 3101,
   },
+  KHWD: {
+    icao: "KHWD",
+    runways: [
+      { designation: "10L/28R", lengthFt: 3107, widthFt: 75, surfaceType: "ASPHALT" },
+      { designation: "10R/28L", lengthFt: 5694, widthFt: 150, surfaceType: "ASPHALT" },
+    ],
+    primaryRunwayLength: 5694,
+  },
 };
 
 // ---- Active TFR dataset (California airspace hazard boxes) ----
@@ -264,15 +273,16 @@ function buildProceduralTerrain(
 ): TerrainPoint[] {
   const totalNm = haversineNm(origin.lat, origin.lon, destination.lat, destination.lon);
   const gcPoints = interpolateGreatCircle(origin.lat, origin.lon, destination.lat, destination.lon, count);
+  // Short bay hops stay low. Longer XC corridors get a realistic ridge bump.
+  const ridgeExtra = totalNm < 25 ? 200 : totalNm < 60 ? 1200 : 2800;
   return gcPoints.map((pt, i) => {
     const f = i / count;
     const baseElev = origin.elevationFt + (destination.elevationFt - origin.elevationFt) * f;
-    // Simulate ridge terrain: midpoint peak
     const ridgeFactor = Math.sin(f * Math.PI);
-    const midElev = Math.max(origin.elevationFt, destination.elevationFt) + 2800;
+    const midElev = Math.max(origin.elevationFt, destination.elevationFt) + ridgeExtra;
     const elev = Math.round(baseElev + ridgeFactor * (midElev - baseElev));
     return {
-      distanceNm: (f * totalNm),
+      distanceNm: f * totalNm,
       lat: pt.lat,
       lon: pt.lon,
       elevationFt: Math.max(0, elev),
@@ -284,7 +294,7 @@ function buildProceduralTerrain(
 
 async function fetchUnknownAirport(icao: string): Promise<AirportLocation | null> {
   try {
-    const url = `https://aviationweather.gov/api/data/airport?ids=${icao}&format=json`;
+    const url = `/api/aviation?kind=airport&ids=${encodeURIComponent(icao)}`;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 2500);
     const res = await fetch(url, { signal: ctrl.signal });
@@ -310,14 +320,7 @@ export async function resolveAirport(icao: string): Promise<AirportLocation> {
   if (AIRPORT_DB[key]) return AIRPORT_DB[key];
   const remote = await fetchUnknownAirport(key);
   if (remote) return remote;
-  // Synthetic fallback: use rough US center with a warning
-  return {
-    icao: key,
-    name: `${key} (coordinates estimated)`,
-    lat: 37.0 + Math.random() * 5,
-    lon: -120.0 - Math.random() * 5,
-    elevationFt: 500,
-  };
+  throw new Error(`Airport ${key} could not be resolved. Check the identifier or try again.`);
 }
 
 // ---- METAR parse helpers ----
@@ -362,7 +365,7 @@ export async function fetchMetar(
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 2500);
-    const url = `https://aviationweather.gov/api/data/metar?ids=${icao}&format=json`;
+    const url = `/api/aviation?kind=metar&ids=${encodeURIComponent(icao)}`;
     const res = await fetch(url, { signal: ctrl.signal });
     clearTimeout(timer);
 
@@ -384,7 +387,7 @@ export async function fetchMetar(
     for (const layer of sky) {
       const cov = parseCoverage(layer.cover);
       if (cov && layer.base != null) {
-        const baseAgl = layer.base * 100;
+        const baseAgl = layer.base; // AWC JSON already reports feet AGL.
         cloudDecks.push({
           coverage: cov,
           baseAglFt: baseAgl,
@@ -409,10 +412,13 @@ export async function fetchMetar(
 
     return {
       icao,
+      source: "METAR",
       rawMetar: rawMetar || `${icao} LIVE METAR`,
       flightCategory,
       windSpeedKt,
       windDirDeg,
+      windGustKt: obs.wgst ?? undefined,
+      visibilitySm,
       tempC,
       dewpointC,
       altimeterInHg,
@@ -421,11 +427,12 @@ export async function fetchMetar(
       cloudDecks,
     };
   } catch {
-    if (fallback) return fallback;
+    if (fallback) return { ...fallback, source: "cached" };
     // Generic fallback for unknown stations
     const densityAltitudeFt = computeDensityAltitude(stationElevFt, 29.92, 15);
     return {
       icao,
+      source: "unavailable",
       rawMetar: `${icao} DATA UNAVAILABLE`,
       flightCategory: "VFR",
       windSpeedKt: 8,
@@ -480,6 +487,59 @@ export async function fetchTerrainProfile(
     }));
   } catch {
     return buildProceduralTerrain(origin, destination, COUNT);
+  }
+}
+
+/** Elevation samples along an arbitrary waypoint list (pilotage doglegs). Free Open-Elevation, not Google. */
+export async function fetchTerrainAlongWaypoints(
+  origin: AirportLocation,
+  waypoints: Array<{ lat: number; lon: number }>
+): Promise<TerrainPoint[]> {
+  if (waypoints.length < 2) {
+    return fetchTerrainProfile(origin, origin);
+  }
+
+  const locations = waypoints.map((p) => ({ latitude: p.lat, longitude: p.lon }));
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    const res = await fetch("https://api.open-elevation.com/api/v1/lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locations }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`Elevation API HTTP ${res.status}`);
+    const data = await res.json();
+    const results: Array<{ latitude: number; longitude: number; elevation: number }> =
+      data.results || [];
+    if (results.length === 0) throw new Error("empty");
+
+    let cumulative = 0;
+    return results.map((pt, i) => {
+      if (i > 0) {
+        cumulative += haversineNm(
+          results[i - 1].latitude,
+          results[i - 1].longitude,
+          pt.latitude,
+          pt.longitude
+        );
+      }
+      return {
+        distanceNm: cumulative,
+        lat: pt.latitude,
+        lon: pt.longitude,
+        elevationFt: Math.round(pt.elevation * 3.28084),
+      };
+    });
+  } catch {
+    const dest = {
+      ...origin,
+      lat: waypoints[waypoints.length - 1].lat,
+      lon: waypoints[waypoints.length - 1].lon,
+    };
+    return buildProceduralTerrain(origin, dest, Math.max(8, waypoints.length - 1));
   }
 }
 
