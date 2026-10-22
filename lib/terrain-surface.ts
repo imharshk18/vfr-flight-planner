@@ -49,7 +49,13 @@ export async function loadTerrainSurface(points: { lat: number; lon: number }[],
         const ctx = c.getContext('2d', { willReadFrequently: true })!;
         ctx.drawImage(dem.value, 0, 0);
         const rgba = ctx.getImageData(0, 0, 256, 256).data;
-        for (let i = 0; i < heights.length; i++) heights[i] = Math.max(0, rgba[i * 4] * 256 + rgba[i * 4 + 1] + rgba[i * 4 + 2] / 256 - 32768);
+        for (let i = 0; i < heights.length; i++) {
+          // Mapzen Terrarium: meters = R*256 + G + B/256 - 32768
+          let m = rgba[i * 4] * 256 + rgba[i * 4 + 1] + rgba[i * 4 + 2] / 256 - 32768;
+          // Flatten sea / bay noise — micro DEM jitter at ~0 m z-fights into "TV static".
+          if (m < 2.5) m = 0;
+          heights[i] = m;
+        }
       } else surface.elevationComplete = false;
       if (photo.status === 'rejected') surface.imageryComplete = false;
       surface.tiles.push({ x, y, heights, image: photo.status === 'fulfilled' ? photo.value : null });

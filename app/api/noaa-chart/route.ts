@@ -1,17 +1,18 @@
 import { NextRequest } from "next/server";
 
 /**
- * Proxy public NOAA chart images so the briefing can show them
+ * Proxy public NOAA / NWS chart images so the briefing can show them
  * without hotlink / CORP failures. Allowlist only.
  */
 
 const CHARTS: Record<string, string> = {
+  surface: "https://www.wpc.ncep.noaa.gov/basicwx/91fndfd.gif",
+  surface36: "https://www.wpc.ncep.noaa.gov/basicwx/92fndfd.gif",
   wind050: "https://aviationweather.gov/data/products/fax/F06_wind_050_a.gif",
   wind100: "https://aviationweather.gov/data/products/fax/F12_wind_100_a.gif",
-  sigwx: "https://aviationweather.gov/data/products/fax/sigwx_lo_us.gif",
-  surface: "https://www.wpc.ncep.noaa.gov/basicwx/92fndfd.gif",
-  surface36: "https://www.wpc.ncep.noaa.gov/basicwx/96fndfd.gif",
   goes: "https://cdn.star.nesdis.noaa.gov/GOES18/ABI/CONUS/GEOCOLOR/latest.jpg",
+  goesir: "https://cdn.star.nesdis.noaa.gov/GOES18/ABI/CONUS/07/latest.jpg",
+  radar: "https://radar.weather.gov/ridge/standard/CONUS_0.gif",
 };
 
 export async function GET(request: NextRequest) {
@@ -29,6 +30,7 @@ export async function GET(request: NextRequest) {
     });
     if (!upstream.ok) throw new Error(`upstream ${upstream.status}`);
     const bytes = await upstream.arrayBuffer();
+    if (!bytes.byteLength) throw new Error("empty chart");
     const type = upstream.headers.get("content-type") || "image/gif";
     return new Response(bytes, {
       headers: {

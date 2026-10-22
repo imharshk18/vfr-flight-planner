@@ -92,7 +92,7 @@ export type WeatherIntel = {
   fetchedAt: string;
 };
 
-/** Nearby TAF stations used to sample forecast along Bay Area / NorCal demos. */
+/** CONUS TAF-capable stations for corridor sampling (not Bay-Area-only). */
 const ENROUTE_TAF_POOL: Array<{
   icao: string;
   name: string;
@@ -100,15 +100,56 @@ const ENROUTE_TAF_POOL: Array<{
   lon: number;
   elevationFt: number;
 }> = [
-  { icao: "KOAK", name: "Oakland", lat: 37.7213, lon: -122.2207, elevationFt: 9 },
+  // West
   { icao: "KSFO", name: "San Francisco", lat: 37.6213, lon: -122.379, elevationFt: 13 },
+  { icao: "KOAK", name: "Oakland", lat: 37.7213, lon: -122.2207, elevationFt: 9 },
   { icao: "KSJC", name: "San Jose", lat: 37.3626, lon: -121.929, elevationFt: 62 },
-  { icao: "KSQL", name: "San Carlos", lat: 37.5119, lon: -122.2495, elevationFt: 5 },
-  { icao: "KLVK", name: "Livermore", lat: 37.6934, lon: -121.8203, elevationFt: 400 },
-  { icao: "KWVI", name: "Watsonville", lat: 36.9357, lon: -121.7896, elevationFt: 163 },
-  { icao: "KSNS", name: "Salinas", lat: 36.6628, lon: -121.6064, elevationFt: 85 },
+  { icao: "KSMF", name: "Sacramento", lat: 38.6954, lon: -121.5908, elevationFt: 27 },
   { icao: "KMRY", name: "Monterey", lat: 36.587, lon: -121.8429, elevationFt: 257 },
-  { icao: "KMOD", name: "Modesto", lat: 37.6258, lon: -120.9544, elevationFt: 97 },
+  { icao: "KLAX", name: "Los Angeles", lat: 33.9425, lon: -118.4081, elevationFt: 128 },
+  { icao: "KSAN", name: "San Diego", lat: 32.7336, lon: -117.1897, elevationFt: 17 },
+  { icao: "KSEA", name: "Seattle", lat: 47.4502, lon: -122.3088, elevationFt: 433 },
+  { icao: "KPDX", name: "Portland", lat: 45.5898, lon: -122.5951, elevationFt: 31 },
+  { icao: "KLAS", name: "Las Vegas", lat: 36.084, lon: -115.1537, elevationFt: 2181 },
+  { icao: "KPHX", name: "Phoenix", lat: 33.4342, lon: -112.0116, elevationFt: 1135 },
+  { icao: "KDEN", name: "Denver", lat: 39.8561, lon: -104.6737, elevationFt: 5431 },
+  { icao: "KSLC", name: "Salt Lake", lat: 40.7899, lon: -111.9791, elevationFt: 4227 },
+  // Midwest / Great Lakes (KMSN–KRFD corridor + neighbors)
+  { icao: "KMSN", name: "Madison", lat: 43.1399, lon: -89.3375, elevationFt: 887 },
+  { icao: "KRFD", name: "Rockford", lat: 42.1954, lon: -89.0972, elevationFt: 742 },
+  { icao: "KMKE", name: "Milwaukee", lat: 42.9472, lon: -87.8966, elevationFt: 678 },
+  { icao: "KORD", name: "Chicago O'Hare", lat: 41.9742, lon: -87.9073, elevationFt: 672 },
+  { icao: "KMDW", name: "Chicago Midway", lat: 41.7868, lon: -87.7522, elevationFt: 620 },
+  { icao: "KJVL", name: "Janesville", lat: 42.6203, lon: -89.0416, elevationFt: 808 },
+  { icao: "KUES", name: "Waukesha", lat: 43.041, lon: -88.2371, elevationFt: 911 },
+  { icao: "KOSH", name: "Oshkosh", lat: 43.9844, lon: -88.5569, elevationFt: 808 },
+  { icao: "KDBQ", name: "Dubuque", lat: 42.402, lon: -90.7095, elevationFt: 1077 },
+  { icao: "KCID", name: "Cedar Rapids", lat: 41.8847, lon: -91.7108, elevationFt: 869 },
+  { icao: "KMSP", name: "Minneapolis", lat: 44.8848, lon: -93.2223, elevationFt: 841 },
+  { icao: "KDSM", name: "Des Moines", lat: 41.534, lon: -93.6631, elevationFt: 958 },
+  { icao: "KIND", name: "Indianapolis", lat: 39.7173, lon: -86.2944, elevationFt: 797 },
+  { icao: "KDTW", name: "Detroit", lat: 42.2124, lon: -83.3534, elevationFt: 645 },
+  { icao: "KSTL", name: "St Louis", lat: 38.7487, lon: -90.3700, elevationFt: 618 },
+  { icao: "KMCI", name: "Kansas City", lat: 39.2976, lon: -94.7139, elevationFt: 1026 },
+  { icao: "KOMA", name: "Omaha", lat: 41.3032, lon: -95.8941, elevationFt: 984 },
+  // South / East
+  { icao: "KDFW", name: "Dallas/Fort Worth", lat: 32.8998, lon: -97.0403, elevationFt: 607 },
+  { icao: "KAUS", name: "Austin", lat: 30.1945, lon: -97.6699, elevationFt: 542 },
+  { icao: "KIAH", name: "Houston", lat: 29.9902, lon: -95.3368, elevationFt: 97 },
+  { icao: "KATL", name: "Atlanta", lat: 33.6407, lon: -84.4277, elevationFt: 1026 },
+  { icao: "KBNA", name: "Nashville", lat: 36.1245, lon: -86.6782, elevationFt: 599 },
+  { icao: "KCLT", name: "Charlotte", lat: 35.214, lon: -80.9431, elevationFt: 748 },
+  { icao: "KMIA", name: "Miami", lat: 25.7959, lon: -80.287, elevationFt: 8 },
+  { icao: "KMCO", name: "Orlando", lat: 28.4312, lon: -81.3081, elevationFt: 96 },
+  { icao: "KBOS", name: "Boston", lat: 42.3656, lon: -71.0096, elevationFt: 20 },
+  { icao: "KJFK", name: "New York JFK", lat: 40.6413, lon: -73.7781, elevationFt: 13 },
+  { icao: "KEWR", name: "Newark", lat: 40.6895, lon: -74.1745, elevationFt: 18 },
+  { icao: "KPHL", name: "Philadelphia", lat: 39.8744, lon: -75.2424, elevationFt: 36 },
+  { icao: "KIAD", name: "Washington Dulles", lat: 38.9531, lon: -77.4565, elevationFt: 312 },
+  { icao: "KBWI", name: "Baltimore", lat: 39.1754, lon: -76.6683, elevationFt: 146 },
+  { icao: "KCVG", name: "Cincinnati", lat: 39.0488, lon: -84.6678, elevationFt: 896 },
+  { icao: "KCLE", name: "Cleveland", lat: 41.4117, lon: -81.8498, elevationFt: 791 },
+  { icao: "KPIT", name: "Pittsburgh", lat: 40.4915, lon: -80.2329, elevationFt: 1203 },
 ];
 
 function category(
@@ -120,6 +161,22 @@ function category(
   if (ceil < 1000 || visibilitySm < 3) return "IFR";
   if (ceil < 3000 || visibilitySm < 5) return "MVFR";
   return "VFR";
+}
+
+function parseTafVisibility(raw: unknown, fallback: number): number {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw !== "string" || !raw.trim()) return fallback;
+  const s = raw.trim().toUpperCase().replace(/SM$/, "");
+  if (s.endsWith("+")) {
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  if (s.includes("/")) {
+    const [a, b] = s.split("/").map(Number);
+    if (b) return a / b;
+  }
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 function parseClouds(
@@ -286,7 +343,7 @@ export async function weatherAtTime(
   const ceilingAglFt = ceilings.length
     ? Math.min(...ceilings.map((c) => c.baseAglFt))
     : null;
-  const visibility = parseFloat(String(period.visib ?? 10));
+  const visibility = parseTafVisibility(period.visib, observed.visibilitySm ?? 10);
   const tempoOrProb = overlapping.some(
     (p) => p.changeIndicator && p.changeIndicator !== "FM"
   );
@@ -302,7 +359,7 @@ export async function weatherAtTime(
       windSpeedKt: period.wspd ?? observed.windSpeedKt,
       windDirDeg:
         typeof period.wdir === "number" ? period.wdir : observed.windDirDeg,
-      visibilitySm: Number.isFinite(visibility) ? visibility : observed.visibilitySm,
+      visibilitySm: visibility,
       flightCategory: category(ceilingAglFt, visibility),
       forecastNote: tempoOrProb
         ? `${proxyNote}TAF window ${fmtWindow(period.timeFrom, period.timeTo)} for ${role}. TEMPO/PROB also in this window — conditions may briefly worsen.`
@@ -321,18 +378,23 @@ async function fetchEnrouteTafs(
 ): Promise<EnrouteStationIntel[]> {
   const midLat = (origin.lat + destination.lat) / 2;
   const midLon = (origin.lon + destination.lon) / 2;
+  const routeNm = haversineNm(origin.lat, origin.lon, destination.lat, destination.lon);
+  // Wider corridor for short hops so enroute stations (KJVL, etc.) still sample.
+  const corridorNm = Math.min(70, Math.max(35, routeNm * 0.35));
+
+  // Spread samples along the path — nearest stations within the corridor band.
   const picks = ENROUTE_TAF_POOL.filter(
     (s) =>
       s.icao !== origin.icao &&
       s.icao !== destination.icao &&
-      pointNearRoute(s.lat, s.lon, origin, destination, 35)
+      pointNearRoute(s.lat, s.lon, origin, destination, corridorNm)
   )
     .sort(
       (a, b) =>
         haversineNm(a.lat, a.lon, midLat, midLon) -
         haversineNm(b.lat, b.lon, midLat, midLon)
     )
-    .slice(0, 3);
+    .slice(0, 6);
 
   const results = await Promise.all(
     picks.map(async (s) => {
@@ -355,7 +417,7 @@ async function fetchEnrouteTafs(
       };
     })
   );
-  return results;
+  return results.filter((r) => r.taf.source === "TAF" || r.weather.source === "METAR");
 }
 
 function routeBbox(
@@ -448,49 +510,133 @@ export async function fetchRoutePireps(
   }
 }
 
-function advisoryIntersects(
-  coords: Array<{ lat: number; lon: number }> | undefined,
+/** Ray-cast point-in-polygon on lon/lat ring (adequate for regional AIRMET areas). */
+function pointInPolygon(
+  lat: number,
+  lon: number,
+  ring: Array<{ lat: number; lon: number }>
+): boolean {
+  if (ring.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const yi = ring[i].lat;
+    const xi = ring[i].lon;
+    const yj = ring[j].lat;
+    const xj = ring[j].lon;
+    const intersect =
+      yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi + 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * True only when the flight path actually clips the advisory area —
+ * NOT when a distant polygon merely has a vertex within N NM of the route.
+ */
+function routeClipsPolygon(
+  ring: Array<{ lat: number; lon: number }>,
   origin: AirportLocation,
   destination: AirportLocation
 ): boolean {
-  if (!coords?.length) {
-    // If no geometry, keep as regional caution (don't hard-block)
-    return false;
+  if (ring.length < 3) return false;
+  const steps = 32;
+  for (let i = 0; i <= steps; i++) {
+    const f = i / steps;
+    const lat = origin.lat + (destination.lat - origin.lat) * f;
+    const lon = origin.lon + (destination.lon - origin.lon) * f;
+    if (pointInPolygon(lat, lon, ring)) return true;
   }
-  return coords.some((c) => pointNearRoute(c.lat, c.lon, origin, destination, 50));
+  return false;
+}
+
+function parseAdvisoryCoords(
+  raw: unknown
+): Array<{ lat: number; lon: number }> | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const coords = raw
+    .map((c) => ({
+      lat: Number((c as { lat?: unknown }).lat),
+      lon: Number((c as { lon?: unknown }).lon),
+    }))
+    .filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon));
+  return coords.length ? coords : undefined;
+}
+
+function advisoryTimeMs(value: unknown): number | null {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    // AWC sometimes returns unix seconds
+    return value < 1e12 ? value * 1000 : value;
+  }
+  const t = Date.parse(String(value));
+  return Number.isFinite(t) ? t : null;
+}
+
+function advisoryCoversMission(
+  validFrom: unknown,
+  expireTime: unknown,
+  missionFromMs: number,
+  missionToMs: number
+): boolean {
+  const from = advisoryTimeMs(validFrom);
+  const to = advisoryTimeMs(expireTime);
+  if (from == null && to == null) return true;
+  const a0 = from ?? missionFromMs - 6 * 3600_000;
+  const a1 = to ?? missionToMs + 6 * 3600_000;
+  return a0 <= missionToMs && a1 >= missionFromMs;
+}
+
+function formatGairmetRaw(g: Record<string, unknown>): string {
+  const due = g.due_to ? String(g.due_to) : "";
+  const hazard = String(g.hazard || "G-AIRMET");
+  const tag = g.tag ? ` ${g.tag}` : "";
+  const base = g.base != null ? String(g.base) : "";
+  const top = g.top != null ? String(g.top) : "";
+  const layer = base || top ? ` ${base || "SFC"}–${top || "UNL"}` : "";
+  const raw = String(g.rawAirmet || g.raw || "").trim();
+  if (raw) return raw;
+  if (due) return `G-AIRMET${tag} ${hazard}${layer}: ${due}`;
+  return `G-AIRMET${tag} ${hazard}${layer}`;
 }
 
 export async function fetchRouteAdvisories(
   origin: AirportLocation,
-  destination: AirportLocation
+  destination: AirportLocation,
+  missionFromIso?: string,
+  missionToIso?: string
 ): Promise<HazardAdvisory[]> {
-  const bbox = routeBbox(origin, destination, 1.2);
+  const bbox = routeBbox(origin, destination, 0.9);
   const out: HazardAdvisory[] = [];
+  const missionFromMs = Date.parse(missionFromIso || "") || Date.now();
+  const missionToMs = Date.parse(missionToIso || "") || missionFromMs + 3 * 3600_000;
 
   try {
     const gair = (await apiGet({ kind: "gairmet", bbox })) as Array<Record<string, unknown>>;
     if (Array.isArray(gair)) {
-      for (const g of gair.slice(0, 40)) {
+      for (const g of gair.slice(0, 80)) {
+        const geom = String(g.geometryType || g.geom || "AREA").toUpperCase();
+        // Freeze levels are lines, not area weather for VFR GO/NO-GO.
+        if (geom === "LINE") continue;
         const hazard = String(g.hazard || g.product || "G-AIRMET");
-        const raw = String(g.rawAirmet || g.raw || JSON.stringify(g).slice(0, 200));
-        const coords = Array.isArray(g.coords)
-          ? (g.coords as Array<{ lat?: number; lon?: number }>).map((c) => ({
-              lat: Number(c.lat),
-              lon: Number(c.lon),
-            })).filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon))
-          : undefined;
-        const intersects = advisoryIntersects(coords, origin, destination);
-        const severe = /IFR|ICE|TURB|MTN|SFC_WND|LLWS/i.test(hazard);
+        if (!advisoryCoversMission(g.validTime, g.expireTime, missionFromMs, missionToMs)) {
+          continue;
+        }
+        const coords = parseAdvisoryCoords(g.coords);
+        const intersects = coords ? routeClipsPolygon(coords, origin, destination) : false;
+        if (!intersects) continue; // drop regional noise that never clips the path
+        const raw = formatGairmetRaw(g);
+        const severe = /IFR|ICE|MT_OBSC|MTN/i.test(hazard);
         out.push({
-          id: `gair-${g.tag || g.receiptTime || out.length}`,
+          id: `gair-${g.tag || g.receiptTime || out.length}-${hazard}`,
           product: "G-AIRMET",
           hazard,
-          severity: severe && intersects ? "caution" : "info",
+          severity: severe ? "caution" : "info",
           raw,
           validFrom: g.validTime ? String(g.validTime) : undefined,
-          validTo: g.expireTime ? String(g.expireTime) : undefined,
-          intersectsRoute: intersects,
-          summary: `G-AIRMET ${hazard}${intersects ? " near corridor" : " in region"}`,
+          validTo: g.expireTime != null ? String(g.expireTime) : undefined,
+          intersectsRoute: true,
+          summary: raw,
         });
       }
     }
@@ -502,25 +648,24 @@ export async function fetchRouteAdvisories(
     const sigs = (await apiGet({ kind: "airsigmet", bbox })) as Array<Record<string, unknown>>;
     if (Array.isArray(sigs)) {
       for (const s of sigs.slice(0, 30)) {
+        if (!advisoryCoversMission(s.validTime, s.expireTime, missionFromMs, missionToMs)) {
+          continue;
+        }
         const hazard = String(s.hazard || s.airSigmetType || "SIGMET");
-        const raw = String(s.rawSigmet || s.raw || "");
-        const coords = Array.isArray(s.coords)
-          ? (s.coords as Array<{ lat?: number; lon?: number }>).map((c) => ({
-              lat: Number(c.lat),
-              lon: Number(c.lon),
-            })).filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon))
-          : undefined;
-        const intersects = advisoryIntersects(coords, origin, destination);
+        const raw = String(s.rawSigmet || s.raw || `${hazard}`).trim();
+        const coords = parseAdvisoryCoords(s.coords);
+        const intersects = coords
+          ? routeClipsPolygon(coords, origin, destination)
+          : false;
+        if (!intersects) continue;
         out.push({
           id: `sig-${s.airSigmetId || s.receiptTime || out.length}`,
           product: "SIGMET",
           hazard,
-          severity: intersects ? "severe" : "caution",
+          severity: "severe",
           raw,
-          intersectsRoute: intersects,
-          summary: intersects
-            ? `SIGMET ${hazard} intersects corridor: ${raw.slice(0, 100)}`
-            : `SIGMET ${hazard} in region (not on corridor): ${raw.slice(0, 80)}`,
+          intersectsRoute: true,
+          summary: raw.slice(0, 220) || `SIGMET ${hazard} intersects corridor`,
         });
       }
     }
@@ -532,15 +677,26 @@ export async function fetchRouteAdvisories(
     const cwas = (await apiGet({ kind: "cwa", bbox })) as Array<Record<string, unknown>>;
     if (Array.isArray(cwas)) {
       for (const c of cwas.slice(0, 20)) {
-        const raw = String(c.rawCwa || c.raw || "");
+        const raw = String(c.rawCwa || c.raw || "").trim();
+        const coords = parseAdvisoryCoords(c.coords);
+        const intersects = coords
+          ? routeClipsPolygon(coords, origin, destination)
+          : pointNearRoute(
+              Number(c.lat ?? origin.lat),
+              Number(c.lon ?? origin.lon),
+              origin,
+              destination,
+              40
+            );
+        if (!intersects) continue;
         out.push({
           id: `cwa-${c.cwsu || c.receiptTime || out.length}`,
           product: "CWA",
           hazard: String(c.hazard || "CWA"),
           severity: "caution",
-          raw,
+          raw: raw || String(c.hazard || "CWA"),
           intersectsRoute: true,
-          summary: `CWA: ${raw.slice(0, 120)}`,
+          summary: raw ? `CWA: ${raw.slice(0, 180)}` : `CWA ${c.hazard || ""}`.trim(),
         });
       }
     }
@@ -550,14 +706,15 @@ export async function fetchRouteAdvisories(
 
   const tfrs = await fetchActiveTfrs();
   for (const t of tfrs) {
-    const near = pointNearRoute(t.centerLat, t.centerLon, origin, destination, t.radiusNm + 15);
+    const near = pointNearRoute(t.centerLat, t.centerLon, origin, destination, t.radiusNm + 8);
+    if (!near) continue;
     out.push({
       id: t.id,
       product: "TFR",
       hazard: "TFR",
-      severity: near ? "severe" : "info",
+      severity: "severe",
       raw: `${t.notamRef} ${t.name}`,
-      intersectsRoute: near,
+      intersectsRoute: true,
       summary: `TFR ${t.name} (${t.notamRef}) SFC-${t.ceilingMsl.toLocaleString()} ft`,
     });
   }
@@ -695,7 +852,12 @@ export async function gatherWeatherIntel(input: {
         ),
     fetchEnrouteTafs(input.origin, input.destination, midIso),
     fetchRoutePireps(input.origin, input.destination, input.cruiseAltitudeFt),
-    fetchRouteAdvisories(input.origin, input.destination),
+    fetchRouteAdvisories(
+      input.origin,
+      input.destination,
+      input.departureLocal,
+      input.etaLocal
+    ),
     fetchActiveTfrs(),
   ]);
 

@@ -5,7 +5,6 @@ import dynamic from "next/dynamic";
 import {
   Cloud,
   Compass,
-  Layers3,
   Maximize,
   Pause,
   Plane,
@@ -68,7 +67,7 @@ export default function Page() {
     return () => clearInterval(timer);
   }, [playing, editing]);
 
-  const buildMission = useCallback(async (intake: MissionIntake, _demo?: DemoRoute) => {
+  const buildMission = useCallback(async (intake: MissionIntake, demo?: DemoRoute) => {
     setLoading(true);
     setError(null);
     setStatus("Resolving airports…");
@@ -130,7 +129,8 @@ export default function Page() {
       const etaLocal = new Date(depMs + roughHours * 3600 * 1000).toISOString();
 
       setStatus("Pulling METAR, TAF windows, enroute forecasts, PIREPs, AIRMETs…");
-      // Demo presets only fix the route (save Google credits). Weather is always live NOAA.
+      // Presets keep their weather deterministic for a repeatable pitch. Custom
+      // missions use the live observation / forecast pipeline.
       const [intel, origRunway, destRunway, windSamples] = await Promise.all([
         gatherWeatherIntel({
           origin,
@@ -138,11 +138,22 @@ export default function Page() {
           departureLocal: intake.departureLocal || new Date().toISOString(),
           etaLocal,
           cruiseAltitudeFt: intake.cruiseAltitudeFt || 4500,
+          lockedOriginWeather: demo?.weather.origin,
+          lockedDestWeather: demo?.weather.destination,
         }),
         fetchRunwayData(origin.icao),
         fetchRunwayData(destination.icao),
         fetchWindsAlongRoute(points, intake.cruiseAltitudeFt || 4500),
       ]);
+      const missionIntel = demo
+        ? {
+            ...intel,
+            advisories: [],
+            pireps: [],
+            tfrs: [],
+            sourcesUsed: ["DEMO WEATHER", "REAL TERRAIN"],
+          }
+        : intel;
 
       const cruiseAltitudeFt =
         intake.altitudeMode === "recommended"
@@ -198,8 +209,8 @@ export default function Page() {
         arrRunway,
       });
 
-      const tfrs = intel.tfrs.filter((t) =>
-        intel.advisories.some((a) => a.id === t.id && a.intersectsRoute)
+      const tfrs = missionIntel.tfrs.filter((t) =>
+        missionIntel.advisories.some((a) => a.id === t.id && a.intersectsRoute)
       );
 
       const decision = runVfrRulesEngine({
@@ -215,8 +226,8 @@ export default function Page() {
         cruiseAltitudeFt,
         tfrs,
         destRunwayData: destRunway,
-        pireps: intel.pireps,
-        advisories: intel.advisories,
+        pireps: missionIntel.pireps,
+        advisories: missionIntel.advisories,
         depRunway,
         arrRunway,
         profileTimeMin: flightProfile.totalTimeMin,
@@ -254,7 +265,7 @@ export default function Page() {
         landmarks,
         weatherHorizonNote: null,
         generatedAt: new Date().toISOString(),
-        weatherIntel: intel,
+        weatherIntel: missionIntel,
         flightProfile,
       });
       setEditing(false);
@@ -332,47 +343,49 @@ export default function Page() {
             onVisualize={() => {
               setProgress(0.05);
               setReset((r) => r + 1);
-              setView("follow");
-              setPlaying(true);
+              // Free orbit of the corridor — not locked to follow-cam
+              setView("explore");
+              setPlaying(false);
             }}
           />
         )}
 
-        {briefing && corridor && d && (
+        {briefing && corridor && d && view !== "orbit" && (
           <>
-            <div className="view-controls segmented">
-              {(["orbit", "follow", "profile"] as const).map((v) => (
+            <nav className="ck-view-switch viz-view-switch" aria-label="3D visualization views">
+              {(
+                [
+                  ["orbit", "COCKPIT"],
+                  ["explore", "FREE 3D"],
+                  ["follow", "FOLLOW"],
+                  ["profile", "SIDE"],
+                ] as const
+              ).map(([mode, label]) => (
                 <button
-                  key={v}
-                  className={view === v ? "active" : ""}
+                  key={mode}
+                  type="button"
+                  className={view === mode ? "active" : ""}
                   onClick={() => {
-                    setView(v);
-                    if (v === "follow") {
+                    setView(mode);
+                    if (mode === "follow") {
                       setPlaying(true);
                       setProgress((p) => (p < 0.02 ? 0.05 : p));
                     } else {
                       setPlaying(false);
+                      if (mode === "explore") setProgress((p) => (p < 0.02 ? 0.05 : p));
+                      if (mode === "orbit") setReset((r) => r + 1);
                     }
                   }}
                 >
-                  {v === "orbit" ? (
-                    <Compass size={14} />
-                  ) : v === "follow" ? (
-                    <Plane size={14} />
-                  ) : (
-                    <Layers3 size={14} />
-                  )}
-                  {v === "orbit" ? "Brief" : v === "follow" ? "Fly" : "Side"}
+                  {label}
                 </button>
               ))}
-            </div>
+            </nav>
             <div className="scene-tools">
               <button
                 title="Reset camera"
                 aria-label="Reset camera"
                 onClick={() => {
-                  setView("orbit");
-                  setPlaying(false);
                   setReset((r) => r + 1);
                 }}
               >
@@ -409,18 +422,14 @@ export default function Page() {
                 <Maximize size={17} />
               </button>
             </div>
-            {view !== "orbit" && (
-              <>
-                <div className="heading-indicator">
-                  <span>HDG</span>
-                  <b>{Math.round(course).toString().padStart(3, "0")}°</b>
-                  <div>W ─── N ─── E</div>
-                </div>
-                <div className="attribution">
-                  Imagery © Esri/Maxar · Elev Mapzen/AWS · Wx NOAA AWC
-                </div>
-              </>
-            )}
+            <div className="heading-indicator">
+              <span>HDG</span>
+              <b>{Math.round(course).toString().padStart(3, "0")}°</b>
+              <div>W ─── N ─── E</div>
+            </div>
+            <div className="attribution">
+              Imagery © Esri/Maxar · Elev Mapzen/AWS · Wx NOAA AWC
+            </div>
           </>
         )}
       </div>

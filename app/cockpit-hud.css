@@ -13,6 +13,56 @@
   --ck-data-font: var(--font-data), ui-monospace, monospace;
 }
 
+/* Yoke in the left footwell — keep clear of STATUS / BRIEF dials. */
+.ck-yoke{
+  position:absolute;
+  z-index:9;
+  left:-7%;
+  bottom:-22%;
+  width:clamp(240px,28vw,420px);
+  height:auto;
+  pointer-events:none;
+  user-select:none;
+  filter:drop-shadow(0 22px 28px rgba(0,0,0,.72)) saturate(.86) brightness(.9);
+  transform:rotate(-1.6deg);
+  transform-origin:50% 100%;
+  animation:ckYokeSet .7s .24s cubic-bezier(.16,1,.3,1) both;
+}
+@keyframes ckYokeSet{from{opacity:0;transform:translateY(56px) rotate(-1.2deg)}to{opacity:1;transform:translateY(0) rotate(-1.6deg)}}
+/* Camera modes — only mounted after Visualize Flight (full map). */
+.ck-view-switch{position:absolute;z-index:12;top:16px;right:18px;display:grid;grid-template-columns:repeat(4,auto);gap:3px;padding:4px;border:1px solid rgba(221,242,245,.22);border-radius:9px;background:rgba(6,15,21,.72);box-shadow:0 10px 28px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.08);backdrop-filter:blur(16px);animation:ckDrop .45s .05s both}
+.ck-view-switch button{border:0;border-radius:6px;padding:9px 12px;background:transparent;color:rgba(213,231,235,.62);font:650 9px var(--ck-data-font);letter-spacing:.12em;cursor:pointer}
+.ck-view-switch button:hover,.ck-view-switch button.active{color:#eaffff;background:rgba(104,229,225,.13);box-shadow:inset 0 0 0 1px rgba(123,245,239,.22)}
+.flight-deck.brief-world .view-controls,
+.flight-deck.brief-world .scene-tools{display:none!important}
+
+.back-cockpit{
+  position:absolute;
+  z-index:14;
+  top:14px;
+  left:16px;
+  border:1px solid rgba(221,242,245,.28);
+  border-radius:10px;
+  padding:10px 14px;
+  background:rgba(6,15,21,.72);
+  color:#e8fbff;
+  font:650 11px var(--ck-data-font);
+  letter-spacing:.08em;
+  backdrop-filter:blur(16px);
+  box-shadow:0 10px 28px rgba(0,0,0,.28);
+  cursor:pointer;
+}
+.back-cockpit:hover{background:rgba(104,229,225,.16);border-color:rgba(123,245,239,.4)}
+.route-brief-head{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:18px;padding-bottom:15px;border-bottom:2px solid rgba(39,57,61,.16)}
+.route-brief-head div{display:flex;flex-direction:column}.route-brief-head small,.route-brief-metrics small,.route-brief-grid small,.route-notam small{font:8px var(--ck-data-font);letter-spacing:.14em;color:#70807f}.route-brief-head strong{font-size:23px;letter-spacing:.04em;color:#172527}.route-brief-head time{font:9px var(--ck-data-font);color:#71807f}
+.route-brief-verdict{padding:6px 10px;border-radius:999px;font:700 9px var(--ck-data-font);letter-spacing:.12em;color:#155c46;background:#d9eee7;border:1px solid #9dcfbe}.route-brief-verdict.no-go{color:#91382e;background:#f5ddd5;border-color:#d8a395}.route-brief-verdict.marginal{color:#805d1b;background:#f4e8c7;border-color:#d8bd75}
+.route-brief-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin:14px 0 4px;overflow:hidden;border:1px solid rgba(32,55,58,.15);border-radius:8px;background:rgba(34,55,58,.12)}.route-brief-metrics span{display:flex;flex-direction:column;gap:3px;padding:10px 12px;background:rgba(255,255,255,.55)}.route-brief-metrics b{color:#243536;font:700 12px var(--ck-data-font)}
+.route-brief-section{padding:17px 0 3px;border-bottom:1px solid rgba(33,52,55,.14)}.route-brief-section-title{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:10px;margin-bottom:11px}.route-brief-section-title>span{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#223638;color:#f2f0e7;font:9px var(--ck-data-font)}.route-brief-section-title div{display:flex;flex-direction:column}.route-brief-section-title b{color:#1f3032;font-size:12px;letter-spacing:.08em}.route-brief-section-title small{color:#6d7a79;font-size:10px}.route-brief-section-title em{font:700 9px var(--ck-data-font);font-style:normal;color:#365f58;padding:4px 7px;border:1px solid rgba(48,91,83,.28);border-radius:5px}
+.route-brief-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.route-brief-grid>div{display:flex;flex-direction:column;padding:9px 10px;border:1px solid rgba(34,56,59,.13);border-radius:6px;background:rgba(255,255,255,.44)}.route-brief-grid b{color:#273a3b;font:650 11px var(--ck-data-font)}.route-brief-raw{display:block;margin-top:8px;padding:8px 10px;border-left:3px solid #94aaa6;background:rgba(225,228,218,.48);color:#52615f!important;font:9px/1.45 var(--ck-data-font);overflow-wrap:anywhere;white-space:pre-wrap}
+.route-brief-empty{display:flex;flex-direction:column;gap:3px;padding:12px;color:#2c6252;background:#dcebe3;border-radius:7px}.route-brief-empty b{font-size:12px}.route-brief-empty span{color:#567069;font-size:10px}.route-notam-list{display:grid;gap:7px}.route-notam{display:grid;grid-template-columns:34px 1fr;gap:10px;padding:11px;border:1px solid #d8c69e;border-radius:7px;background:rgba(250,241,214,.72)}.route-notam.stop{border-color:#dca496;background:rgba(249,225,216,.76)}.route-notam-index{color:#8d4b3c;font:700 16px var(--ck-data-font)}.route-notam div{display:flex;flex-direction:column}.route-notam b{color:#263739;font-size:12px}.route-notam p{color:#4b5b5c;font-size:11px;line-height:1.45;margin:4px 0 0}.route-brief-source{margin:14px 0 0;color:#6d7977;font-size:9px;font-style:italic}
+
+@media(max-width:900px){.ck-yoke{width:34vw;left:-10%;bottom:-24%}.ck-view-switch{top:12px;right:10px;left:10px;grid-template-columns:repeat(4,1fr)}.ck-view-switch button{padding:8px 4px;font-size:8px}.route-brief-head{grid-template-columns:1fr auto}.route-brief-head time{grid-column:1/-1}.route-brief-metrics{grid-template-columns:repeat(2,1fr)}}
+
 .ck-shell {
   position: absolute;
   inset: 0;
@@ -22,6 +72,9 @@
   transition: opacity 0.45s ease;
   font-family: var(--ck-display-font);
   color: var(--ck-ink);
+  display: grid;
+  place-items: center;
+  background: #07090a;
 }
 .ck-shell.is-on {
   opacity: 1;
@@ -32,13 +85,23 @@
   cursor: pointer;
 }
 
+/* Match cockpit-frame-v2.png (1672×941) so dial centers = well centers */
+.ck-rig {
+  position: relative;
+  width: min(100vw, calc(100dvh * 1672 / 941));
+  height: min(100dvh, calc(100vw * 941 / 1672));
+  aspect-ratio: 1672 / 941;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
+
 .ck-frame {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  object-position: center 52%;
+  object-fit: fill;
   pointer-events: none;
   z-index: 2;
   user-select: none;
@@ -265,7 +328,7 @@
 }
 .ck-dial {
   position: absolute;
-  width: min(12vw, 152px);
+  width: 9.55%;
   aspect-ratio: 1;
   border: 0;
   padding: 0;
@@ -511,4 +574,562 @@
   .ck-dial {
     transform: translate(-50%, -50%);
   }
+}
+
+/* Cockpit v2 — one photographic shell, live glass, and instrument portals. */
+.flight-deck.brief-world {
+  position: relative;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: #07090a;
+}
+
+.flight-deck.brief-world .topbar {
+  display: none;
+}
+
+.flight-deck.brief-world .scene-stage {
+  height: 100dvh;
+  min-height: 100dvh;
+}
+
+.flight-deck.brief-world .scene-stage::after {
+  z-index: 7;
+  box-shadow:
+    inset 0 0 100px rgba(5, 10, 12, 0.22),
+    inset 0 80px 100px rgba(3, 8, 12, 0.14);
+}
+
+.ck-shell {
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.scene-stage > .ck-shell {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  width: auto;
+  height: auto;
+}
+
+.ck-frame {
+  z-index: 4;
+  filter: saturate(0.88) contrast(1.035) brightness(0.96);
+  user-select: none;
+}
+
+.ck-windshield-glare {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background:
+    linear-gradient(112deg, transparent 12%, rgba(255,255,255,.09) 24%, transparent 34%),
+    linear-gradient(78deg, transparent 70%, rgba(255,218,164,.07) 79%, transparent 90%);
+  mix-blend-mode: screen;
+  opacity: .48;
+  animation: ckGlare 10s ease-in-out infinite alternate;
+}
+
+@keyframes ckGlare {
+  from { transform: translateX(-2%); opacity: .35; }
+  to { transform: translateX(2%); opacity: .58; }
+}
+
+.ck-strip {
+  top: 3.2%;
+  width: min(900px, 78vw);
+  min-height: 68px;
+  gap: 13px;
+  padding: 10px 13px;
+  border-radius: 13px;
+  background:
+    linear-gradient(180deg, rgba(28, 43, 51, .66), rgba(11, 21, 27, .5));
+  border-color: rgba(219, 241, 245, .34);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, .24),
+    inset 0 1px 0 rgba(255,255,255,.25),
+    0 0 0 1px rgba(63, 196, 213, .06);
+  backdrop-filter: blur(22px) saturate(1.35);
+}
+
+.ck-box {
+  border: 0;
+  border-radius: 7px;
+  background: rgba(4, 12, 17, .5);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.09);
+  min-width: 88px;
+  padding: 8px 12px;
+}
+
+.ck-box strong {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: .08em;
+}
+
+.ck-box em,
+.ck-altbox em,
+.ck-avionics em {
+  color: rgba(218, 237, 241, .65);
+}
+
+.ck-to {
+  color: #97f8f2;
+  text-shadow: 0 0 16px rgba(88, 244, 236, .7);
+}
+
+.ck-rule {
+  background: rgba(221, 241, 245, .2);
+}
+
+.ck-slider::before {
+  height: 3px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #61e6e5 0 44%, rgba(255,255,255,.16) 44%);
+}
+
+.ck-slider i {
+  border-radius: 50%;
+  background: #f5ffff;
+  box-shadow: 0 0 0 3px rgba(110, 241, 236, .28), 0 0 18px #73f2ed;
+}
+
+.ck-fly {
+  top: 34%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 230px;
+  padding: 13px 25px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(142, 255, 247, .7);
+  background: linear-gradient(180deg, rgba(27, 54, 62, .66), rgba(5, 18, 25, .56));
+  box-shadow:
+    0 10px 30px rgba(0,0,0,.28),
+    inset 0 1px 0 rgba(255,255,255,.24),
+    0 0 26px rgba(75, 241, 232, .2);
+  backdrop-filter: blur(16px);
+}
+
+.ck-fly span {
+  font-size: 12px;
+  letter-spacing: .22em;
+}
+
+.ck-fly small {
+  font-family: var(--ck-data-font);
+  font-size: 7px;
+  letter-spacing: .17em;
+  color: rgba(207, 240, 241, .6);
+}
+
+.ck-horizon-ticks {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 25%;
+  width: 176px;
+  height: 90px;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: 1fr 24px;
+  align-items: center;
+  gap: 5px;
+  opacity: .52;
+  color: #b7fff8;
+  pointer-events: none;
+  filter: drop-shadow(0 0 5px rgba(65,235,224,.45));
+}
+
+.ck-horizon-ticks i,
+.ck-horizon-ticks b {
+  justify-self: end;
+  display: block;
+  height: 1px;
+  width: 62px;
+  background: currentColor;
+}
+
+.ck-horizon-ticks b { width: 110px; }
+.ck-horizon-ticks span { font: 7px var(--ck-data-font); }
+
+/* Two chrome radio wells on the right of cockpit-frame-v2 */
+.ck-avionics {
+  right: 12.5%;
+  top: 66.5%;
+  width: 17.5%;
+  max-width: 220px;
+  min-width: 140px;
+  gap: 7.5%;
+  height: 24%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.ck-avionics-slot {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  min-height: 0;
+  border-radius: 3px;
+  padding: 7px 10px;
+  background: radial-gradient(circle at 50% 18%, rgba(62,32,10,.82), rgba(1,3,4,.94));
+  border: 1px solid rgba(255, 184, 92, .16);
+  box-shadow: inset 0 0 14px rgba(0,0,0,.75);
+}
+
+.ck-avionics-slot span {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.ck-avionics-slot em {
+  font-family: var(--ck-data-font);
+  font-style: normal;
+  font-size: 8px;
+  letter-spacing: .16em;
+  color: rgba(255, 196, 120, .55);
+}
+
+.ck-avionics-slot b {
+  margin-top: 2px;
+  font-family: var(--ck-data-font);
+  font-size: clamp(12px, 1.1vw, 15px);
+  font-weight: 600;
+  color: #ffad53;
+  letter-spacing: .06em;
+  text-shadow: 0 0 10px rgba(255, 154, 46, .45);
+}
+
+.ck-dial {
+  /* Fill the well to the inner chrome — ~9.5% of the 16:9 frame */
+  width: 9.55%;
+  max-width: none;
+  min-width: 0;
+  background:
+    radial-gradient(circle at 50% 48%, #172127 0 33%, #080b0d 68%, #010203 100%);
+  box-shadow:
+    0 6px 12px rgba(0,0,0,.55),
+    inset 0 0 0 1.5px rgba(229,215,192,.22),
+    inset 0 0 0 5px rgba(0,0,0,.5),
+    inset 0 -10px 18px rgba(0,0,0,.68);
+}
+
+.ck-dial::before {
+  content: "";
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.08);
+  background:
+    repeating-conic-gradient(from -90deg, rgba(255,255,255,.22) 0 .5deg, transparent .5deg 12deg);
+  -webkit-mask: radial-gradient(circle, transparent 0 76%, #000 77%);
+  mask: radial-gradient(circle, transparent 0 76%, #000 77%);
+}
+
+.ck-dial:hover {
+  transform: translate(-50%, -50%) scale(1.055);
+  filter: brightness(1.18);
+  box-shadow:
+    0 12px 22px rgba(0,0,0,.66),
+    inset 0 0 0 2px rgba(240,225,202,.45),
+    0 0 25px color-mix(in srgb, currentColor 28%, transparent);
+}
+
+/* Centers measured from cockpit-frame-v2.png well holes (1672×941) */
+.ck-slot-a1 { left: 23.3%; top: 67.6%; }
+.ck-slot-a2 { left: 34.9%; top: 67.6%; }
+.ck-slot-a3 { left: 46.1%; top: 67.6%; }
+.ck-slot-a4 { left: 57.5%; top: 67.6%; }
+.ck-slot-b1 { left: 40.0%; top: 85.1%; }
+.ck-slot-b2 { left: 51.5%; top: 84.9%; }
+.ck-slot-b3 { left: 62.7%; top: 84.9%; }
+
+.ck-dial-track { stroke: rgba(255,255,255,.09); stroke-width: 3.4; }
+.ck-dial-arc { stroke-width: 3.4; }
+.ck-dial-label { color: rgba(214, 229, 231, .7); font-size: clamp(7px, 0.65vw, 9px); }
+.ck-dial-copy { padding: 0 12%; }
+.ck-dial-copy b { font-weight: 600; font-size: clamp(13px, 1.2vw, 18px); }
+.ck-dial-copy small { color: rgba(211, 225, 226, .65); font-size: clamp(7px, 0.6vw, 9px); line-height: 1.25; }
+
+.flight-deck.brief-world .view-controls {
+  bottom: auto;
+  top: 14%;
+  z-index: 12;
+  border-radius: 11px;
+  background: rgba(8, 20, 25, .52);
+  border-color: rgba(214, 239, 242, .22);
+  backdrop-filter: blur(16px);
+}
+
+.flight-deck.brief-world .view-controls button {
+  border-radius: 7px;
+}
+
+.flight-deck.brief-world .scene-tools {
+  left: auto;
+  right: 2.3%;
+  top: 23%;
+  bottom: auto;
+  z-index: 12;
+}
+
+.flight-deck.brief-world .scene-tools button {
+  border-radius: 50%;
+  background: rgba(8, 20, 25, .55);
+  border-color: rgba(216, 242, 245, .24);
+  backdrop-filter: blur(14px);
+}
+
+.brief-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(2, 8, 12, .48);
+  backdrop-filter: blur(16px) saturate(.8);
+  animation: briefBackdropIn .28s ease both;
+}
+
+.brief-paper {
+  position: relative;
+  width: min(720px, 94vw);
+  max-height: 84vh;
+  overflow: auto;
+  padding: 28px 30px 19px;
+  border-radius: 3px 14px 14px 3px;
+  color: #1e2526;
+  background:
+    linear-gradient(90deg, rgba(91,68,38,.07) 0 1px, transparent 1px 34px),
+    repeating-linear-gradient(0deg, transparent 0 27px, rgba(72,91,91,.065) 27px 28px),
+    #f3efe4;
+  box-shadow:
+    0 35px 100px rgba(0,0,0,.55),
+    inset 7px 0 18px rgba(73,48,25,.08),
+    inset 0 0 0 1px rgba(255,255,255,.45);
+  font-family: var(--ck-display-font);
+  transform-origin: 42% 100%;
+  animation: briefPaperIn .46s cubic-bezier(.16,1,.3,1) both;
+}
+
+.brief-paper:has(.chart-frame),
+.brief-paper:has(.chart-picks) {
+  width: min(860px, 96vw);
+}
+
+.brief-meta {
+  margin: 0 0 10px;
+  font: 12px/1.5 var(--ck-data-font);
+  color: #4f5f5e;
+}
+.brief-lead {
+  margin: 0 0 12px;
+  font-size: 15px;
+  line-height: 1.65;
+  color: #1f2a2a;
+}
+.brief-note {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid #9bb0ab;
+  background: rgba(225, 228, 218, .55);
+  color: #3d4d4b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.brief-cite {
+  margin: 14px 0 0;
+  font: 10px/1.45 var(--ck-data-font);
+  color: #6d7977;
+}
+.brief-subhead {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #3a4a49;
+}
+.brief-jump {
+  margin-bottom: 14px;
+  border: 1px solid rgba(27, 37, 38, .28);
+  background: #223638;
+  color: #f2f0e7;
+  border-radius: 8px;
+  padding: 9px 12px;
+  font: 11px var(--ck-data-font);
+  letter-spacing: .08em;
+  cursor: pointer;
+}
+.wx-block { margin-bottom: 16px; }
+.wx-block-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.wx-block-head strong { font-size: 15px; color: #1f3032; }
+.wx-block-head span { font: 10px var(--ck-data-font); color: #6d7a79; letter-spacing: .1em; }
+
+.rule-check-list { display: grid; gap: 8px; margin: 12px 0 4px; }
+.rule-check {
+  padding: 11px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(34, 56, 59, .16);
+  background: rgba(255,255,255,.55);
+}
+.rule-check.fail { border-color: #d8a395; background: rgba(249,225,216,.82); }
+.rule-check.caution { border-color: #d8bd75; background: rgba(250,241,214,.8); }
+.rule-check.pass { border-color: #9dcfbe; background: rgba(217,238,231,.72); }
+.rule-check header {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.rule-check header b { font-size: 13px; color: #1f3032; }
+.rule-check header em { font: 9px var(--ck-data-font); font-style: normal; color: #667372; letter-spacing: .04em; }
+.rule-check header span { font: 700 9px var(--ck-data-font); letter-spacing: .1em; color: #243536; }
+.rule-check p,
+.rule-check-detail {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #3d4d4b;
+  white-space: pre-wrap;
+}
+.finding-body { white-space: pre-wrap; }
+
+.finding-card {
+  margin-bottom: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid #d8c69e;
+  background: rgba(250,241,214,.72);
+}
+.finding-card.stop { border-color: #dca496; background: rgba(249,225,216,.8); }
+.finding-title { font-weight: 650; margin-bottom: 4px; color: #263739; font-size: 13px; }
+.finding-body { font-size: 13px; line-height: 1.5; color: #3d4d4b; }
+
+.chart-picks { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.chart-picks button {
+  border: 1px solid rgba(27,37,38,.22);
+  background: rgba(255,255,255,.55);
+  color: #1f3032;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: 11px var(--ck-data-font);
+  cursor: pointer;
+}
+.chart-picks button.on { background: #152028; color: #fff; border-color: #152028; }
+.chart-frame {
+  width: 100%;
+  border-radius: 10px;
+  display: block;
+  background: #eef3f5;
+  border: 1px solid rgba(27,37,38,.12);
+  min-height: 220px;
+  object-fit: contain;
+}
+.chart-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px;
+  border-radius: 10px;
+  background: #f5ddd5;
+  color: #91382e;
+}
+.chart-error span { color: #6d4a44; font-size: 12px; }
+
+.brief-paper::before {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(184, 86, 70, .2);
+}
+
+.brief-paper-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding-bottom: 15px;
+  margin-bottom: 17px;
+  border-bottom: 2px solid rgba(34, 49, 50, .72);
+}
+
+.brief-paper-head > div { flex: 1; }
+.brief-paper-head small {
+  display: block;
+  margin-bottom: 5px;
+  font: 9px var(--ck-data-font);
+  letter-spacing: .22em;
+  color: #667372;
+}
+.brief-paper-head span {
+  display: block;
+  font-size: clamp(25px, 4vw, 38px);
+  line-height: 1;
+  letter-spacing: -.035em;
+  text-transform: uppercase;
+}
+.brief-paper-head button {
+  border: 1px solid rgba(27,37,38,.25);
+  border-radius: 50%;
+  width: 34px;
+  height: 34px;
+  background: rgba(255,255,255,.4);
+  color: #202929;
+  font-size: 23px;
+  line-height: 1;
+}
+.brief-paper-body { line-height: 1.55; }
+.brief-paper-body code { color: #495959 !important; }
+.brief-paper footer {
+  margin-top: 18px;
+  padding-top: 11px;
+  border-top: 1px solid rgba(31,47,47,.24);
+  font: 8px var(--ck-data-font);
+  letter-spacing: .11em;
+  color: #75807d;
+}
+
+@keyframes briefBackdropIn { from { opacity: 0; } }
+@keyframes briefPaperIn {
+  from { opacity: 0; transform: translateY(46px) rotateX(-8deg) scale(.94); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 980px) {
+  .ck-strip { width: calc(100% - 28px); }
+  .ck-end, .ck-rule { display: none; }
+  .ck-dial { width: 9.55%; }
+  .ck-avionics { display: none; }
+}
+
+@media (max-width: 720px) {
+  .ck-strip { top: 10px; padding: 8px; gap: 7px; min-height: 58px; }
+  .ck-box { min-width: 64px; padding: 7px 9px; }
+  .ck-box strong { font-size: 15px; }
+  .ck-altbox { min-width: 120px; }
+  .ck-fly { top: 28%; min-width: 190px; }
+  .ck-horizon-ticks { display: none; }
+  .ck-dial { width: 9.55%; }
+  .flight-deck.brief-world .view-controls { top: 86px; }
+  .flight-deck.brief-world .scene-tools { top: 140px; }
+  .brief-modal-backdrop { padding: 10px; }
+  .brief-paper { padding: 23px 20px 16px 27px; }
 }

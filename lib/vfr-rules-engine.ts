@@ -4,27 +4,71 @@ import type {
   StationWeather,
   TerrainPoint,
   VfrCorridorDecision,
+  VfrRuleCheck,
   TfrZone,
   AirportRunwayData,
   AirportLocation,
+  CloudDeck,
 } from "./aviation-types";
 import { haversineNm, computeCourseDeg } from "./aviation-api";
 import type { HazardAdvisory, PirepReport, RunwayRecommendation } from "./aviation-intel";
+import { calculateLoading } from "./weight-balance";
+
+/** Official ceiling = lowest BKN or OVC. FEW/SCT are clouds, not a ceiling. */
+function officialCeilingAgl(wx: StationWeather): number | null {
+  const layers = wx.cloudDecks.filter((d) => d.coverage === "BKN" || d.coverage === "OVC");
+  if (!layers.length) return null;
+  return Math.min(...layers.map((d) => d.baseAglFt));
+}
+
+function scatteredDecks(wx: StationWeather): CloudDeck[] {
+  return wx.cloudDecks.filter((d) => d.coverage === "FEW" || d.coverage === "SCT");
+}
+
+function visSm(wx: StationWeather): number | null {
+  if (typeof wx.visibilitySm === "number" && Number.isFinite(wx.visibilitySm)) {
+    return wx.visibilitySm;
+  }
+  // Recover from raw METAR when structured vis was omitted (demo packs / partial TAF).
+  const m = wx.rawMetar?.match(/\b(\d{1,2}(?:\/\d{1,2})?)SM\b/);
+  if (m) {
+    const raw = m[1];
+    if (raw.includes("/")) {
+      const [a, b] = raw.split("/").map(Number);
+      if (b) return a / b;
+    }
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  // Flight category already encodes visibility bands when AWC computed it.
+  if (wx.flightCategory === "VFR") return 6;
+  if (wx.flightCategory === "MVFR") return 4;
+  if (wx.flightCategory === "IFR") return 2;
+  if (wx.flightCategory === "LIFR") return 0.5;
+  return null;
+}
+
+function describeSky(wx: StationWeather): string {
+  const ceil = officialCeilingAgl(wx);
+  const scat = scatteredDecks(wx);
+  const bits: string[] = [];
+  if (ceil != null) bits.push(`ceiling ${ceil.toLocaleString()} ft AGL (BKN/OVC)`);
+  else bits.push("no ceiling (sky clear of BKN/OVC)");
+  if (scat.length) {
+    bits.push(
+      `scattered/few at ${scat
+        .map((d) => `${d.coverage}${Math.round(d.baseAglFt / 100)
+          .toString()
+          .padStart(3, "0")}`)
+        .join(", ")} — not a ceiling`
+    );
+  }
+  const v = visSm(wx);
+  bits.push(v != null ? `vis ${v} SM` : "vis unreported");
+  return bits.join("; ");
+}
 
 // ---- Weight and Balance ----
-
-function computeRampWeight(
-  aircraft: AircraftProfile,
-  wb: WeightAndBalanceState
-): number {
-  return (
-    aircraft.emptyWeightLbs +
-    wb.pilotWeightLbs +
-    wb.passengerWeightLbs +
-    wb.baggageLbs +
-    wb.fuelGallons * 6.0
-  );
-}
 
 // ---- Density Altitude ----
 
@@ -157,17 +201,59 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
   const cautions: string[] = [];
   const citations: string[] = [];
   const briefingHighlights: string[] = [];
+  const ruleChecks: VfrRuleCheck[] = [];
+
+  const pushFail = (id: string, regulation: string, title: string, detail: string) => {
+    blockers.push(detail);
+    citations.push(regulation);
+    ruleChecks.push({ id, regulation, title, result: "fail", detail });
+  };
+  const pushCaution = (id: string, regulation: string, title: string, detail: string) => {
+    cautions.push(detail);
+    ruleChecks.push({ id, regulation, title, result: "caution", detail });
+  };
+  const pushPass = (id: string, regulation: string, title: string, detail: string) => {
+    ruleChecks.push({ id, regulation, title, result: "pass", detail });
+  };
 
   // ---- 1. Weight and Balance ----
-  const totalRampWeightLbs = computeRampWeight(aircraft, wb);
+  const loading = calculateLoading(aircraft, wb);
+  const totalRampWeightLbs = loading.rampWeightLbs;
   const weightStatus: VfrCorridorDecision["weightStatus"] =
-    totalRampWeightLbs > aircraft.maxGrossWeightLbs ? "OVERWEIGHT" : "LEGAL";
+    loading.weightLegal ? "LEGAL" : "OVERWEIGHT";
+  const cgStatus: VfrCorridorDecision["cgStatus"] =
+    loading.cgLegal ? "IN_ENVELOPE" : "OUT_OF_ENVELOPE";
 
   if (weightStatus === "OVERWEIGHT") {
-    blockers.push(
-      `Aircraft overweight: ${totalRampWeightLbs.toFixed(0)} lbs exceeds MGTOW of ${aircraft.maxGrossWeightLbs} lbs by ${(totalRampWeightLbs - aircraft.maxGrossWeightLbs).toFixed(0)} lbs`
+    const maxRamp = aircraft.maxRampWeightLbs ?? aircraft.maxGrossWeightLbs;
+    pushFail(
+      "weight",
+      "14 CFR 91.9 / POH",
+      "Weight limits",
+      `Aircraft overweight: ${totalRampWeightLbs.toFixed(0)} lbs exceeds maximum ramp weight of ${maxRamp} lbs by ${(totalRampWeightLbs - maxRamp).toFixed(0)} lbs`
     );
-    citations.push("14 CFR 91.9 - Max Gross Weight Limitation");
+  } else {
+    pushPass(
+      "weight",
+      "14 CFR 91.9 / POH",
+      "Weight limits",
+      `Ramp weight ${Math.round(totalRampWeightLbs).toLocaleString()} lbs is within max ${(aircraft.maxRampWeightLbs ?? aircraft.maxGrossWeightLbs).toLocaleString()} lbs.`
+    );
+  }
+  if (!loading.cgLegal) {
+    pushFail(
+      "cg",
+      "Aircraft POH — Weight and Balance",
+      "Center of gravity",
+      `Center of gravity ${loading.centerOfGravityIn.toFixed(1)} in is outside the ${loading.forwardLimitIn.toFixed(1)}–${loading.aftLimitIn.toFixed(1)} in loading envelope.`
+    );
+  } else {
+    pushPass(
+      "cg",
+      "Aircraft POH — Weight and Balance",
+      "Center of gravity",
+      `CG ${loading.centerOfGravityIn.toFixed(1)} in is inside ${loading.forwardLimitIn.toFixed(1)}–${loading.aftLimitIn.toFixed(1)} in.`
+    );
   }
 
   // ---- 2. Density Altitude at Origin ----
@@ -179,8 +265,18 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
   const calculatedClimbRateFpm = Math.round(computeClimbRate(aircraft, originDA));
 
   if (originDA > 8000) {
-    cautions.push(
-      `High density altitude at departure: ${originDA.toLocaleString()} ft MSL. Performance significantly degraded.`
+    pushCaution(
+      "da",
+      "POH — Density altitude",
+      "Departure density altitude",
+      `High density altitude at departure: ${originDA.toLocaleString()} ft. Performance significantly degraded.`
+    );
+  } else {
+    pushPass(
+      "da",
+      "POH — Density altitude",
+      "Departure density altitude",
+      `Departure DA ~${originDA.toLocaleString()} ft · estimated climb ${calculatedClimbRateFpm} fpm.`
     );
   }
 
@@ -193,10 +289,19 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
   const minTerrainClearanceFt = cruiseAltitudeFt - maxTerrainElevFt;
 
   if (cruiseAltitudeFt < requiredMinAltFt) {
-    blockers.push(
+    pushFail(
+      "terrain",
+      "14 CFR 91.119",
+      "Minimum safe altitude",
       `Terrain penetration: cruise altitude ${cruiseAltitudeFt.toLocaleString()} ft is below required ${requiredMinAltFt.toLocaleString()} ft MSL (1,000 ft above ${maxTerrainElevFt.toLocaleString()} ft obstacle)`
     );
-    citations.push("14 CFR 91.119 - Minimum Safe Altitudes Over Congested and Other Areas");
+  } else {
+    pushPass(
+      "terrain",
+      "14 CFR 91.119",
+      "Minimum safe altitude",
+      `${minTerrainClearanceFt.toLocaleString()} ft above highest corridor terrain (${maxTerrainElevFt.toLocaleString()} ft).`
+    );
   }
 
   // ---- 4. Climb Gradient vs Rising Terrain ----
@@ -209,22 +314,37 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
     distNm > 0 ? (terrainClimb / ((distNm * 0.5) / (aircraft.cruiseTasKt / 60))) : 0;
 
   if (calculatedClimbRateFpm < 250 && requiredClimbFpm > 300) {
-    blockers.push(
+    pushFail(
+      "climb",
+      "POH — Climb performance",
+      "Climb vs terrain",
       `Climb deficit: aircraft climb rate ${calculatedClimbRateFpm} FPM at density altitude ${originDA.toLocaleString()} ft cannot meet required ${Math.round(requiredClimbFpm)} FPM gradient over terrain`
     );
-    citations.push("POH Climb Performance Limitation at Density Altitude");
   } else if (calculatedClimbRateFpm < 400) {
-    cautions.push(
+    pushCaution(
+      "climb",
+      "POH — Climb performance",
+      "Climb vs terrain",
       `Marginal climb rate: ${calculatedClimbRateFpm} FPM at density altitude ${originDA.toLocaleString()} ft. Allow extra runway distance.`
+    );
+  } else {
+    pushPass(
+      "climb",
+      "POH — Climb performance",
+      "Climb vs terrain",
+      `Climb ${calculatedClimbRateFpm} fpm is adequate for the corridor gradient.`
     );
   }
 
-  // ---- 5. Cloud Clearance (14 CFR 91.155) using forecast-at-ETA when available ----
+  // ---- 5. Basic VFR weather (14 CFR 91.155) — ceiling ≠ FEW/SCT ----
+  // Day private-pilot XC assumption: Class E below 10,000 MSL enroute
+  // (3 SM, 500 below / 1,000 above / 2,000 horiz). Surface B/C/D/E also
+  // needs ceiling ≥ 1,000 AGL (91.155(c)) and 3 SM for takeoff/landing (91.155(d)).
   const effectiveDestWeather = simulateMarineLayerBurnOff
     ? {
         ...arrWx,
-        ceilingAglFt: arrWx.ceilingAglFt
-          ? arrWx.ceilingAglFt + 2000
+        ceilingAglFt: officialCeilingAgl(arrWx)
+          ? (officialCeilingAgl(arrWx) as number) + 2000
           : null,
         cloudDecks: arrWx.cloudDecks.map((d) => ({
           ...d,
@@ -234,62 +354,304 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
       }
     : arrWx;
 
-  if (arrWx.flightCategory === "IFR" || arrWx.flightCategory === "LIFR") {
-    blockers.push(
-      `Arrival forecast category ${arrWx.flightCategory} (${arrWx.source || "wx"} at ETA). VFR arrival not supported under basic minima.`
+  const depCeil = officialCeilingAgl(depWx);
+  const arrCeil = officialCeilingAgl(effectiveDestWeather);
+  const depVis = visSm(depWx);
+  const arrVis = visSm(effectiveDestWeather);
+
+  const catFrom = (ceil: number | null, vis: number | null): StationWeather["flightCategory"] => {
+    const c = ceil ?? 99999;
+    const v = vis ?? 10;
+    if (c < 500 || v < 1) return "LIFR";
+    if (c < 1000 || v < 3) return "IFR";
+    if (c < 3000 || v < 5) return "MVFR";
+    return "VFR";
+  };
+  const depCat = catFrom(depCeil, depVis);
+  const arrCat = catFrom(arrCeil, arrVis);
+
+  // 91.155(d) — takeoff / landing visibility in surface controlled airspace
+  if (depVis != null && depVis < 3) {
+    pushFail(
+      "dep-vis",
+      "14 CFR 91.155(d)",
+      "Departure visibility",
+      `Departure ground/flight visibility ${depVis} SM is below the 3 SM required to take off VFR in surface controlled airspace.`
     );
-    citations.push("14 CFR 91.155 - Basic VFR Weather Minimums");
-  } else if (arrWx.flightCategory === "MVFR") {
-    cautions.push(
-      `Arrival forecast is MVFR (${arrWx.source || "wx"}). Marginal VFR; have an IFR or divert plan.`
+  } else if (depVis != null) {
+    pushPass(
+      "dep-vis",
+      "14 CFR 91.155(d)",
+      "Departure visibility",
+      `Departure visibility ${depVis} SM meets the 3 SM takeoff/landing minimum.`
+    );
+  } else {
+    pushCaution(
+      "dep-vis",
+      "14 CFR 91.155(d)",
+      "Departure visibility",
+      "Departure visibility not reported — confirm at least 3 SM before takeoff."
     );
   }
 
-  if (depWx.flightCategory === "IFR" || depWx.flightCategory === "LIFR") {
-    blockers.push(
-      `Departure forecast category ${depWx.flightCategory}. VFR departure not supported.`
+  if (arrVis != null && arrVis < 3) {
+    pushFail(
+      "arr-vis",
+      "14 CFR 91.155(d)",
+      "Arrival visibility",
+      `Arrival visibility ${arrVis} SM is below the 3 SM required to land VFR in surface controlled airspace.`
     );
-    citations.push("14 CFR 91.155 - Basic VFR Weather Minimums");
+  } else if (arrVis != null) {
+    pushPass(
+      "arr-vis",
+      "14 CFR 91.155(d)",
+      "Arrival visibility",
+      `Arrival visibility ${arrVis} SM meets the 3 SM landing minimum.`
+    );
+  } else {
+    pushCaution(
+      "arr-vis",
+      "14 CFR 91.155(d)",
+      "Arrival visibility",
+      "Arrival visibility not reported — confirm at least 3 SM before entering the pattern."
+    );
   }
 
+  // 91.155(c) — ceiling under surface controlled airspace (BKN/OVC only)
+  if (depCeil != null && depCeil < 1000) {
+    pushFail(
+      "dep-ceil",
+      "14 CFR 91.155(c)",
+      "Departure ceiling",
+      `Departure ceiling ${depCeil.toLocaleString()} ft AGL (BKN/OVC) is below the 1,000 ft required to operate beneath the ceiling in surface controlled airspace. FEW/SCT layers are not ceilings.`
+    );
+  } else if (depCeil != null) {
+    pushPass(
+      "dep-ceil",
+      "14 CFR 91.155(c)",
+      "Departure ceiling",
+      `Departure ceiling ${depCeil.toLocaleString()} ft AGL (BKN/OVC) is at/above 1,000 ft. ${describeSky(depWx)}.`
+    );
+  } else {
+    pushPass(
+      "dep-ceil",
+      "14 CFR 91.155(c)",
+      "Departure ceiling",
+      `No BKN/OVC ceiling at departure — ${describeSky(depWx)}. FEW/SCT alone do not create a ceiling or force a NO-GO.`
+    );
+  }
+
+  if (arrCeil != null && arrCeil < 1000) {
+    pushFail(
+      "arr-ceil",
+      "14 CFR 91.155(c)",
+      "Arrival ceiling",
+      `Arrival ceiling ${arrCeil.toLocaleString()} ft AGL (BKN/OVC) is below the 1,000 ft required to operate beneath the ceiling in surface controlled airspace.`
+    );
+  } else if (arrCeil != null) {
+    pushPass(
+      "arr-ceil",
+      "14 CFR 91.155(c)",
+      "Arrival ceiling",
+      `Arrival ceiling ${arrCeil.toLocaleString()} ft AGL (BKN/OVC) is at/above 1,000 ft. ${describeSky(effectiveDestWeather)}.`
+    );
+  } else {
+    pushPass(
+      "arr-ceil",
+      "14 CFR 91.155(c)",
+      "Arrival ceiling",
+      `No BKN/OVC ceiling at arrival — ${describeSky(effectiveDestWeather)}. A few/scattered clouds are not the flight ceiling.`
+    );
+  }
+
+  // Category from ceiling (BKN/OVC only) + vis — never trust a stale label alone
+  if (depCat === "IFR" || depCat === "LIFR") {
+    // Already covered by 91.155(c)/(d) fails; keep a category note only if those somehow passed
+    if (
+      !ruleChecks.some((r) => r.id === "dep-ceil" && r.result === "fail") &&
+      !ruleChecks.some((r) => r.id === "dep-vis" && r.result === "fail")
+    ) {
+      pushFail(
+        "dep-cat",
+        "14 CFR 91.155",
+        "Departure flight category",
+        `Departure computes ${depCat} from ceiling/vis (${describeSky(depWx)}). Basic VFR is not supported without Special VFR.`
+      );
+    }
+  } else if (depCat === "MVFR") {
+    pushCaution(
+      "dep-cat",
+      "14 CFR 91.155",
+      "Departure flight category",
+      `Departure is MVFR — may still be legal VFR, but margins are thin. ${describeSky(depWx)}.`
+    );
+  }
+
+  if (arrCat === "IFR" || arrCat === "LIFR") {
+    if (
+      !ruleChecks.some((r) => r.id === "arr-ceil" && r.result === "fail") &&
+      !ruleChecks.some((r) => r.id === "arr-vis" && r.result === "fail")
+    ) {
+      pushFail(
+        "arr-cat",
+        "14 CFR 91.155",
+        "Arrival flight category",
+        `Arrival computes ${arrCat} at ETA (${describeSky(effectiveDestWeather)}). Basic VFR arrival not supported without Special VFR.`
+      );
+    }
+  } else if (arrCat === "MVFR") {
+    pushCaution(
+      "arr-cat",
+      "14 CFR 91.155",
+      "Arrival flight category",
+      `Arrival is MVFR from ceiling/vis. Legal VFR may still exist — have a divert. ${describeSky(effectiveDestWeather)}.`
+    );
+  }
+
+  // Pattern altitude vs true ceiling (BKN/OVC) — 500 ft below clouds in Class E
   const patternAltFt = destination.elevationFt + 1000;
   let cloudBufferFt = 99999;
 
-  if (effectiveDestWeather.ceilingAglFt !== null) {
-    const ceilingMsl = destination.elevationFt + effectiveDestWeather.ceilingAglFt;
+  if (arrCeil != null) {
+    const ceilingMsl = destination.elevationFt + arrCeil;
     cloudBufferFt = ceilingMsl - patternAltFt;
 
     if (cloudBufferFt < 500) {
-      blockers.push(
-        `Destination cloud clearance violation: ceiling ${Math.round(ceilingMsl).toLocaleString()} ft MSL leaves only ${Math.round(cloudBufferFt)} ft buffer above pattern altitude ${patternAltFt.toLocaleString()} ft MSL (500 ft below clouds required)`
+      pushFail(
+        "pattern-cloud",
+        "14 CFR 91.155(a) — 500 ft below",
+        "Pattern cloud clearance",
+        `Destination ceiling ${Math.round(ceilingMsl).toLocaleString()} ft MSL leaves only ${Math.round(cloudBufferFt)} ft above pattern altitude ${patternAltFt.toLocaleString()} ft MSL (need 500 ft below BKN/OVC).`
       );
-      citations.push("14 CFR 91.155 - Basic VFR Weather Minimums: 500 ft Below Clouds");
     } else if (cloudBufferFt < 1000) {
-      cautions.push(
-        `Tight cloud buffer at destination: ${Math.round(cloudBufferFt)} ft between pattern altitude and ceiling.`
+      pushCaution(
+        "pattern-cloud",
+        "14 CFR 91.155(a) — 500 ft below",
+        "Pattern cloud clearance",
+        `Tight buffer: ${Math.round(cloudBufferFt)} ft between pattern altitude and the BKN/OVC ceiling.`
+      );
+    } else {
+      pushPass(
+        "pattern-cloud",
+        "14 CFR 91.155(a) — 500 ft below",
+        "Pattern cloud clearance",
+        `${Math.round(cloudBufferFt)} ft between pattern altitude and the BKN/OVC ceiling.`
       );
     }
+  } else {
+    pushPass(
+      "pattern-cloud",
+      "14 CFR 91.155(a)",
+      "Pattern cloud clearance",
+      "No BKN/OVC ceiling at destination — pattern altitude is not capped by a ceiling. FEW/SCT still require clear-of-clouds judgment."
+    );
   }
 
-  // Check if cruise altitude penetrates ceiling (obs + forecast decks)
+  // Cruise vs ceiling (BKN/OVC only) — hard stop if inside / within 500 ft below
   const ceilingDecks = [
     ...depWx.cloudDecks,
-    ...arrWx.cloudDecks,
+    ...effectiveDestWeather.cloudDecks,
     ...originWeather.cloudDecks,
     ...destWeather.cloudDecks,
-  ].filter((d) => d.coverage === "BKN" || d.coverage === "OVC");
+  ].filter((d) => (d.coverage === "BKN" || d.coverage === "OVC") && d.baseMslFt > 0);
+
+  let cruiseCeilingHit = false;
   for (const deck of ceilingDecks) {
     if (deck.baseMslFt > 0 && cruiseAltitudeFt > deck.baseMslFt - 500) {
-      blockers.push(
-        `Cruise altitude ${cruiseAltitudeFt.toLocaleString()} ft penetrates or is within 500 ft below cloud deck at ${deck.baseMslFt.toLocaleString()} ft MSL`
+      cruiseCeilingHit = true;
+      pushFail(
+        "cruise-ceiling",
+        "14 CFR 91.155(a) — Class E cloud clearance",
+        "Cruise vs ceiling",
+        `Cruise ${cruiseAltitudeFt.toLocaleString()} ft is within 500 ft below (or into) a ${deck.coverage} ceiling at ${deck.baseMslFt.toLocaleString()} ft MSL — that is IMC risk, not “a few clouds.”`
       );
-      citations.push("14 CFR 91.155 - 500 ft Below Cloud Clearance Requirement");
       break;
+    }
+  }
+  if (!cruiseCeilingHit) {
+    pushPass(
+      "cruise-ceiling",
+      "14 CFR 91.155(a)",
+      "Cruise vs ceiling",
+      `Cruise ${cruiseAltitudeFt.toLocaleString()} ft stays ≥500 ft below any BKN/OVC ceiling along the corridor.`
+    );
+  }
+
+  // FEW/SCT are NOT ceilings — caution only for Class E 500/1000 clearance
+  const scatterDecks = [
+    ...depWx.cloudDecks,
+    ...effectiveDestWeather.cloudDecks,
+  ].filter((d) => (d.coverage === "FEW" || d.coverage === "SCT") && d.baseMslFt > 0);
+
+  let scatterCaution = false;
+  for (const deck of scatterDecks) {
+    const below = deck.baseMslFt - cruiseAltitudeFt;
+    const above = cruiseAltitudeFt - deck.baseMslFt;
+    // Inside / very near a scattered layer → caution (maintain clearance), not NO-GO
+    if (below >= 0 && below < 500) {
+      scatterCaution = true;
+      pushCaution(
+        "cruise-scatter",
+        "14 CFR 91.155(a) — cloud clearance",
+        "Scattered/few cloud clearance",
+        `${deck.coverage} at ${deck.baseMslFt.toLocaleString()} ft MSL is only ${Math.round(below)} ft above cruise. That is NOT a ceiling, but Class E still wants 500 ft below clouds — descend, climb above with 1,000 ft, or deviate laterally.`
+      );
+      break;
+    }
+    if (above >= 0 && above < 1000) {
+      scatterCaution = true;
+      pushCaution(
+        "cruise-scatter",
+        "14 CFR 91.155(a) — cloud clearance",
+        "Scattered/few cloud clearance",
+        `Cruise is ${Math.round(above)} ft above a ${deck.coverage} layer at ${deck.baseMslFt.toLocaleString()} ft MSL. Not a ceiling — keep 1,000 ft above or stay clear of clouds.`
+      );
+      break;
+    }
+  }
+  if (!scatterCaution && scatterDecks.length) {
+    pushPass(
+      "cruise-scatter",
+      "14 CFR 91.155(a)",
+      "Scattered/few cloud clearance",
+      `FEW/SCT layers present but cruise maintains Class E clearance margins. Reminder: FEW/SCT do not define the flight ceiling.`
+    );
+  } else if (!scatterDecks.length) {
+    pushPass(
+      "cruise-scatter",
+      "14 CFR 91.155(a)",
+      "Scattered/few cloud clearance",
+      "No FEW/SCT layers in the departure/arrival sky groups used for this check."
+    );
+  }
+
+  // Hemispheric VFR cruise (91.159) — advisory
+  const courseDeg = computeCourseDeg(origin.lat, origin.lon, destination.lat, destination.lon);
+  if (cruiseAltitudeFt >= 3000) {
+    const eastbound = ((courseDeg % 360) + 360) % 360 < 180;
+    const thousands = Math.floor(cruiseAltitudeFt / 1000);
+    const isOdd = thousands % 2 === 1;
+    const isPlus500 = cruiseAltitudeFt % 1000 === 500;
+    const ok = isPlus500 && ((eastbound && isOdd) || (!eastbound && !isOdd));
+    const suggested = nextVfrCruiseAltitude(Math.max(3500, cruiseAltitudeFt - 500), courseDeg);
+    if (!ok) {
+      pushCaution(
+        "hemi",
+        "14 CFR 91.159",
+        "VFR cruising altitude",
+        `Cruise ${cruiseAltitudeFt.toLocaleString()} ft may not match hemispheric VFR (${eastbound ? "eastbound odd+500" : "westbound even+500"}). Consider ${suggested.toLocaleString()} ft.`
+      );
+    } else {
+      pushPass(
+        "hemi",
+        "14 CFR 91.159",
+        "VFR cruising altitude",
+        `Cruise ${cruiseAltitudeFt.toLocaleString()} ft matches day VFR hemispheric rule for this course.`
+      );
     }
   }
 
   // ---- 6. Fuel and Reserves (14 CFR 91.151) ----
-  const courseDeg = computeCourseDeg(origin.lat, origin.lon, destination.lat, destination.lon);
   const avgWindSpeedKt = (depWx.windSpeedKt + arrWx.windSpeedKt) / 2;
   const avgWindDirDeg = depWx.windDirDeg;
   const { headwindKt, crosswindKt } = computeWindComponents(
@@ -310,31 +672,57 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
   const reserveFuelRemainingGal = wb.fuelGallons - fuelRequiredGal;
 
   if (wb.fuelGallons < totalFuelNeededGal) {
-    blockers.push(
+    pushFail(
+      "fuel",
+      "14 CFR 91.151",
+      "Day VFR fuel reserve",
       `Fuel exhaustion risk: ${wb.fuelGallons.toFixed(1)} gal on board insufficient for ${fuelRequiredGal.toFixed(1)} gal enroute plus ${dayVfrReserveGal.toFixed(1)} gal VFR reserve (${totalFuelNeededGal.toFixed(1)} gal total required)`
     );
-    citations.push("14 CFR 91.151 - Day VFR 30-Minute Fuel Reserve Requirement");
   } else if (reserveFuelRemainingGal < dayVfrReserveGal * 1.5) {
-    cautions.push(
-      `Reserve fuel tight: ${reserveFuelRemainingGal.toFixed(1)} gal remaining after flight (minimum ${dayVfrReserveGal.toFixed(1)} gal required).`
+    pushCaution(
+      "fuel",
+      "14 CFR 91.151",
+      "Day VFR fuel reserve",
+      `Reserve fuel tight: ${reserveFuelRemainingGal.toFixed(1)} gal remaining after flight (minimum ${dayVfrReserveGal.toFixed(1)} gal / 30 min required).`
+    );
+  } else {
+    pushPass(
+      "fuel",
+      "14 CFR 91.151",
+      "Day VFR fuel reserve",
+      `${wb.fuelGallons.toFixed(1)} gal on board covers ${fuelRequiredGal.toFixed(1)} gal enroute + ${dayVfrReserveGal.toFixed(1)} gal (30 min) day VFR reserve.`
     );
   }
 
   // ---- 7. Crosswind / runway recommendation ----
   const arrXw = arrRunway?.crosswindKt ?? crosswindKt;
   if (arrRunway && !arrRunway.legal) {
-    blockers.push(
+    pushFail(
+      "xwind",
+      "POH — Max demonstrated crosswind",
+      "Arrival crosswind",
       `Arrival runway ${arrRunway.designation}: crosswind ${arrRunway.crosswindKt} kt exceeds max demonstrated ${aircraft.maxCrosswindKt} kt`
     );
-    citations.push("POH Maximum Demonstrated Crosswind Limitation");
   } else if (arrXw > aircraft.maxCrosswindKt) {
-    blockers.push(
+    pushFail(
+      "xwind",
+      "POH — Max demonstrated crosswind",
+      "Arrival crosswind",
       `Crosswind component ${arrXw.toFixed(1)} kt exceeds aircraft maximum demonstrated crosswind of ${aircraft.maxCrosswindKt} kt`
     );
-    citations.push("POH Maximum Demonstrated Crosswind Limitation");
   } else if (arrXw > aircraft.maxCrosswindKt * 0.75) {
-    cautions.push(
+    pushCaution(
+      "xwind",
+      "POH — Max demonstrated crosswind",
+      "Arrival crosswind",
       `Arrival crosswind ${arrXw.toFixed(1)} kt approaching max demonstrated ${aircraft.maxCrosswindKt} kt.`
+    );
+  } else {
+    pushPass(
+      "xwind",
+      "POH — Max demonstrated crosswind",
+      "Arrival crosswind",
+      `Arrival crosswind ${arrXw.toFixed(1)} kt within demonstrated ${aircraft.maxCrosswindKt} kt.`
     );
   }
   if (depRunway) {
@@ -345,16 +733,26 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
   }
 
   // ---- 8. TFR Conflict Check ----
+  let tfrHit = false;
   for (const tfr of tfrs) {
     const clips = greatCircleSegmentClipsTfr(terrainProfile, tfr, cruiseAltitudeFt);
     if (clips) {
-      blockers.push(
+      tfrHit = true;
+      pushFail(
+        "tfr",
+        "14 CFR 91.141",
+        "Temporary flight restriction",
         `TFR conflict: flight path intersects "${tfr.name}" (${tfr.notamRef}) - ${tfr.radiusNm} NM radius centered at ${tfr.centerLat.toFixed(4)}, ${tfr.centerLon.toFixed(4)}, surface to ${tfr.ceilingMsl.toLocaleString()} ft MSL`
       );
-      citations.push(
-        "14 CFR 91.141 - Temporary Flight Restriction Airspace Breach"
-      );
     }
+  }
+  if (!tfrHit) {
+    pushPass(
+      "tfr",
+      "14 CFR 91.141",
+      "Temporary flight restriction",
+      "No active TFR cylinder intersects the planned corridor at cruise altitude."
+    );
   }
 
   // ---- 9. Runway Length Check at Density Altitude ----
@@ -368,13 +766,25 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
   const runwayUsageRatio = landingRollFt / availableRunwayFt;
 
   if (runwayUsageRatio > 0.8) {
-    blockers.push(
+    pushFail(
+      "runway",
+      "POH — Landing distance",
+      "Runway length",
       `Runway length violation: estimated landing roll ${landingRollFt.toLocaleString()} ft exceeds 80% of available ${availableRunwayFt.toLocaleString()} ft on Rwy ${arrRunway?.designation || "primary"} at DA ${destDA.toLocaleString()} ft`
     );
-    citations.push("POH Runway Performance - 80% Runway Buffer Violation");
   } else if (runwayUsageRatio > 0.6) {
-    cautions.push(
+    pushCaution(
+      "runway",
+      "POH — Landing distance",
+      "Runway length",
       `Runway margin tight: landing roll ${landingRollFt.toLocaleString()} ft on ${availableRunwayFt.toLocaleString()} ft (${Math.round(runwayUsageRatio * 100)}% used).`
+    );
+  } else {
+    pushPass(
+      "runway",
+      "POH — Landing distance",
+      "Runway length",
+      `Landing roll ~${landingRollFt.toLocaleString()} ft on ${availableRunwayFt.toLocaleString()} ft available (${Math.round(runwayUsageRatio * 100)}% used).`
     );
   }
 
@@ -382,41 +792,71 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
   const severePireps = pireps.filter((p) => p.severity === "severe");
   const cautionPireps = pireps.filter((p) => p.severity === "caution");
   for (const p of severePireps.slice(0, 3)) {
-    blockers.push(`Severe PIREP near corridor: ${p.summary}`);
-    citations.push("PIREP - Pilot Weather Report");
+    pushFail("pirep", "PIREP", "Severe pilot report", `Severe PIREP near corridor: ${p.summary}`);
   }
   for (const p of cautionPireps.slice(0, 3)) {
-    cautions.push(`PIREP: ${p.summary} (${p.ageHours}h ago)`);
+    pushCaution("pirep", "PIREP", "Pilot report", `PIREP: ${p.summary} (${p.ageHours}h ago)`);
   }
 
   const sigmets = advisories.filter((a) => a.product === "SIGMET" && a.intersectsRoute);
   for (const s of sigmets.slice(0, 3)) {
-    blockers.push(`SIGMET along route: ${s.summary}`);
-    citations.push("SIGMET - Significant Meteorological Information");
+    const body = (s.raw || s.summary).trim();
+    pushFail(
+      "sigmet",
+      "SIGMET",
+      "Significant weather",
+      `SIGMET ${s.hazard} clips the planned corridor.\n${body}`
+    );
   }
 
   const airmets = advisories.filter(
-    (a) => a.product === "G-AIRMET" && a.intersectsRoute && /IFR|ICE|TURB|MTN/i.test(a.hazard)
+    (a) =>
+      a.product === "G-AIRMET" &&
+      a.intersectsRoute &&
+      /IFR|ICE|TURB|MT_OBSC|MTN|LLWS|SFC_WND/i.test(a.hazard)
   );
   for (const a of airmets.slice(0, 4)) {
+    const body = (a.raw || a.summary).trim();
     if (/IFR/i.test(a.hazard)) {
-      blockers.push(`G-AIRMET IFR near corridor: ${a.summary}`);
-      citations.push("G-AIRMET - Graphical AIRMET");
+      // Polygon-clipped IFR AIRMET = widespread IMC on the path → hard stop for basic VFR
+      pushFail(
+        "airmet",
+        "G-AIRMET SIERRA",
+        "AIRMET IFR on corridor",
+        `G-AIRMET IFR area clips your route (ceilings/visibility below basic VFR).\n${body}`
+      );
+    } else if (/ICE/i.test(a.hazard)) {
+      pushFail(
+        "airmet",
+        "G-AIRMET ZULU",
+        "AIRMET icing on corridor",
+        `G-AIRMET icing clips your route.\n${body}`
+      );
     } else {
-      cautions.push(`G-AIRMET ${a.hazard}: ${a.summary}`);
+      pushCaution(
+        "airmet",
+        "G-AIRMET",
+        `AIRMET ${a.hazard}`,
+        `G-AIRMET ${a.hazard} clips your route.\n${body}`
+      );
     }
   }
 
   const cwas = advisories.filter((a) => a.product === "CWA" && a.intersectsRoute);
   for (const c of cwas.slice(0, 2)) {
-    cautions.push(c.summary);
+    pushCaution(
+      "cwa",
+      "CWA",
+      "Center weather advisory",
+      `${c.summary}${c.raw && c.raw !== c.summary ? `\n${c.raw}` : ""}`
+    );
   }
 
   briefingHighlights.push(
     `Wx sources: METAR + TAF (${depWx.source}/${arrWx.source}) · ${pireps.length} PIREPs · ${advisories.filter((a) => a.product === "G-AIRMET").length} G-AIRMETs · ${sigmets.length} SIGMETs`
   );
   briefingHighlights.push(
-    `Dep ${depWx.flightCategory} · Arr ${arrWx.flightCategory} · Ceiling buf ${cloudBufferFt === 99999 ? "CLR" : `${Math.round(cloudBufferFt)} ft`}`
+    `Dep ${depCat} · Arr ${arrCat} · Ceiling ${arrCeil == null && depCeil == null ? "none (FEW/SCT ≠ ceiling)" : `buf ${cloudBufferFt === 99999 ? "CLR" : `${Math.round(cloudBufferFt)} ft`}`}`
   );
 
   // ---- Verdict ----
@@ -425,14 +865,21 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
 
   if (blockers.length > 0) {
     verdict = "NO_GO";
-    summary = `NO-GO: ${blockers.length} hard stop${blockers.length > 1 ? "s" : ""} from forecast, hazards, or performance. Do not depart VFR as planned.`;
+    summary = `NO-GO: ${blockers.length} hard stop${blockers.length > 1 ? "s" : ""} under private-pilot day VFR rules (91.155/91.151/91.119 and performance). Do not depart VFR as planned.`;
   } else if (cautions.length >= 2) {
     verdict = "MARGINAL";
-    summary = `MARGINAL: ${cautions.length} caution items (TAF/PIREPs/AIRMETs/performance). PIC judgment required.`;
+    summary = `MARGINAL: ${cautions.length} caution items. Legal VFR may exist — PIC judgment required. FEW/SCT alone are not treated as a ceiling.`;
   } else {
     verdict = "GO";
-    summary = "GO: Live METAR/TAF, hazard products, terrain, fuel, and runway checks support VFR as planned.";
+    summary =
+      cautions.length === 1
+        ? `GO with one caution: ${cautions[0]}`
+        : "GO: Day VFR checks (ceiling=BKN/OVC only, 3 SM, terrain, fuel, runway) support the plan. You remain PIC.";
   }
+
+  // Fail → caution → pass so NO-GO drivers surface first in every UI list.
+  const rank = { fail: 0, caution: 1, pass: 2 } as const;
+  ruleChecks.sort((a, b) => rank[a.result] - rank[b.result]);
 
   return {
     verdict,
@@ -440,6 +887,7 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
     blockers,
     cautions,
     regulatoryCitations: [...new Set(citations)],
+    ruleChecks,
     minTerrainClearanceFt,
     cloudBufferFt: cloudBufferFt === 99999 ? 99999 : Math.round(cloudBufferFt),
     calculatedClimbRateFpm,
@@ -460,6 +908,9 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
     fuelRequiredGal: Math.round(fuelRequiredGal * 10) / 10,
     reserveFuelRemainingGal: Math.round(reserveFuelRemainingGal * 10) / 10,
     totalRampWeightLbs: Math.round(totalRampWeightLbs),
+    takeoffWeightLbs: Math.round(loading.takeoffWeightLbs),
+    centerOfGravityIn: Math.round(loading.centerOfGravityIn * 10) / 10,
+    cgStatus,
     weightStatus,
   };
 }
@@ -504,12 +955,15 @@ export function autoOptimizeCruiseAltitude(
   // terrain-safe VFR altitude and let the rules engine flag the cloud conflict.
   let optimal = nextVfrCruiseAltitude(minPractical, courseDeg);
 
+  // Cap only on true ceilings (BKN/OVC). FEW/SCT must not pull cruise down.
   const ceilingMslValues: number[] = [];
-  if (originWeather.ceilingAglFt !== null) {
-    ceilingMslValues.push(originWeather.ceilingAglFt + origin.elevationFt);
+  const originCeil = officialCeilingAgl(originWeather);
+  const destCeil = officialCeilingAgl(destWeather);
+  if (originCeil !== null) {
+    ceilingMslValues.push(originCeil + origin.elevationFt);
   }
-  if (destWeather.ceilingAglFt !== null) {
-    ceilingMslValues.push(destWeather.ceilingAglFt + destination.elevationFt);
+  if (destCeil !== null) {
+    ceilingMslValues.push(destCeil + destination.elevationFt);
   }
   if (ceilingMslValues.length > 0) {
     const cloudCap = Math.min(...ceilingMslValues) - 500;

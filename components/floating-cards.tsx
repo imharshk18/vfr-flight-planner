@@ -6,17 +6,65 @@ import { Html, RoundedBox } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { MissionBriefing } from "@/lib/mission-types";
-import { buildFindings, fallbackSynopsis, formatTafWindow } from "@/lib/briefing-narrative";
+import {
+  buildFindings,
+  bySeverityFirst,
+  fallbackSynopsis,
+  formatTafWindow,
+} from "@/lib/briefing-narrative";
 
 export type BriefSection = "adverse" | "synopsis" | "weather" | "forecast" | "charts" | "notams";
 
 const CHARTS = [
-  { id: "sigwx", title: "Significant weather" },
-  { id: "wind050", title: "Winds FL050" },
-  { id: "wind100", title: "Winds FL100" },
-  { id: "surface", title: "Surface" },
-  { id: "goes", title: "GOES-West" },
+  {
+    id: "surface",
+    title: "Surface analysis",
+    blurb:
+      "WPC surface chart — fronts, highs/lows, and precipitation. Use it to see whether a front or marine layer sits on your corridor.",
+  },
+  {
+    id: "surface36",
+    title: "Surface +36h",
+    blurb: "WPC outlook ~36 hours out. Check whether arrival weather is improving or deteriorating after your ETA.",
+  },
+  {
+    id: "wind050",
+    title: "Winds FL050",
+    blurb: "Forecast winds near 5,000 ft. Compare to your cruise altitude for headwind/tailwind and drift.",
+  },
+  {
+    id: "wind100",
+    title: "Winds FL100",
+    blurb: "Forecast winds near 10,000 ft. Useful if you climb higher or evaluate an alternate altitude.",
+  },
+  {
+    id: "goes",
+    title: "GOES Geocolor",
+    blurb: "Live satellite — cloud coverage and fog/stratus. FEW/SCT patches are not a ceiling; look for solid BKN/OVC decks.",
+  },
+  {
+    id: "goesir",
+    title: "GOES IR",
+    blurb: "Infrared satellite highlights cold cloud tops (taller convection). Helpful for spotting buildups along the route.",
+  },
+  {
+    id: "radar",
+    title: "CONUS radar",
+    blurb: "National radar mosaic. Echoes on your path are a go/no-go cue for VFR — detour or delay if painted.",
+  },
 ] as const;
+
+function skyLine(w: { ceilingAglFt: number | null; cloudDecks: { coverage: string; baseAglFt: number }[] }) {
+  const decks = w.cloudDecks.filter((d) => d.coverage !== "SKC");
+  if (!decks.length) return "Sky clear — no reported cloud layers.";
+  return decks
+    .map((d) => {
+      const base = `${d.coverage} ${d.baseAglFt.toLocaleString()} ft AGL`;
+      if (d.coverage === "BKN" || d.coverage === "OVC") return `${base} (CEILING)`;
+      return `${base} (not a ceiling)`;
+    })
+    .join(" · ");
+}
 
 function PortalPlate({
   position,
@@ -165,64 +213,29 @@ function ModalShell({
     <div
       role="dialog"
       aria-modal="true"
+      aria-label={title}
       onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 200,
-        display: "grid",
-        placeItems: "center",
-        background: "rgba(4,8,12,0.62)",
-        backdropFilter: "blur(12px)",
-      }}
+      className="brief-modal-backdrop"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(620px, 92vw)",
-          maxHeight: "80vh",
-          overflow: "auto",
-          borderRadius: 2,
-          border: "1px solid rgba(255,255,255,0.14)",
-          background: "linear-gradient(165deg,#161d24,#0a0e12)",
-          color: "#e8eef2",
-          boxShadow: "0 40px 100px rgba(0,0,0,.55)",
-          padding: 22,
-          fontFamily: "var(--font-barlow), sans-serif",
-        }}
+        className="brief-paper"
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-          <span
-            style={{
-              fontSize: 22,
-              letterSpacing: "0.08em",
-              fontWeight: 700,
-              textTransform: "uppercase",
-            }}
-          >
-            {title}
-          </span>
+        <div className="brief-paper-head">
+          <div>
+            <small>AEROTWIN · PILOT BRIEF</small>
+            <span>{title}</span>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            style={{
-              marginLeft: "auto",
-              border: "1px solid rgba(255,255,255,0.2)",
-              borderRadius: 1,
-              padding: "10px 14px",
-              background: "#e8eef2",
-              color: "#0a0e12",
-              fontSize: 12,
-              fontWeight: 700,
-              letterSpacing: "0.12em",
-              cursor: "pointer",
-              fontFamily: "var(--font-plex-mono), monospace",
-            }}
+            aria-label={`Close ${title}`}
           >
-            CLOSE
+            ×
           </button>
         </div>
-        {children}
+        <div className="brief-paper-body">{children}</div>
+        <footer>PRELIMINARY BRIEF · VERIFY AGAINST OFFICIAL SOURCES BEFORE FLIGHT</footer>
       </div>
     </div>,
     document.body
@@ -233,12 +246,10 @@ function ModalShell({
 export default function FloatingCards({
   briefing,
   span,
-  section,
   onSection,
 }: {
   briefing: MissionBriefing;
   span: number;
-  section: BriefSection | null;
   onSection: (s: BriefSection | null) => void;
 }) {
   const stamp = useRef<THREE.Group>(null);
@@ -246,9 +257,11 @@ export default function FloatingCards({
   const { decision: d, weather } = briefing.corridor;
   const notams = useMemo(() => {
     const findings = buildFindings(d, briefing.weatherIntel);
-    return findings.filter((f) =>
-      ["TFR/NOTAM", "TFR", "SIGMET", "G-AIRMET", "CWA", "PIREP"].includes(f.source)
-    );
+    return findings
+      .filter((f) =>
+        ["TFR/NOTAM", "TFR", "SIGMET", "G-AIRMET", "CWA", "PIREP"].includes(f.source)
+      )
+      .sort(bySeverityFirst);
   }, [d, briefing.weatherIntel]);
 
   useFrame(() => {
@@ -398,19 +411,51 @@ export function BriefPortalModals({
   section: BriefSection | null;
   onSection: (s: BriefSection | null) => void;
 }) {
-  const [chart, setChart] = useState<(typeof CHARTS)[number]["id"]>("sigwx");
-  const [synopsis, setSynopsis] = useState("");
+  const [chart, setChart] = useState<(typeof CHARTS)[number]["id"]>("surface");
+  const [chartError, setChartError] = useState(false);
+  const [remoteSynopsis, setRemoteSynopsis] = useState({ key: "", value: "" });
   const { decision: d, weather } = briefing.corridor;
   const intel = briefing.weatherIntel;
   const findings = useMemo(() => buildFindings(d, intel), [d, intel]);
-  const adverse = findings.filter((f) => f.severity === "stop" || f.severity === "caution");
-  const notams = findings.filter((f) =>
-    ["TFR/NOTAM", "TFR", "SIGMET", "G-AIRMET", "CWA", "PIREP"].includes(f.source)
+  const adverse = findings
+    .filter((f) => f.severity === "stop" || f.severity === "caution")
+    .slice()
+    .sort(bySeverityFirst);
+  const notams = findings
+    .filter((f) =>
+      ["TFR/NOTAM", "TFR", "SIGMET", "G-AIRMET", "CWA", "PIREP"].includes(f.source)
+    )
+    .slice()
+    .sort(bySeverityFirst);
+  const ruleChecksSorted = useMemo(
+    () =>
+      [...(d.ruleChecks || [])].sort(
+        (a, b) =>
+          ({ fail: 0, caution: 1, pass: 2 }[a.result] ?? 3) -
+          ({ fail: 0, caution: 1, pass: 2 }[b.result] ?? 3)
+      ),
+    [d.ruleChecks]
+  );
+  const corridorProducts = useMemo(
+    () =>
+      [...(intel?.advisories || [])]
+        .filter((a) => a.intersectsRoute)
+        .sort(
+          (a, b) =>
+            ({ severe: 0, caution: 1, info: 2 }[a.severity] ?? 3) -
+            ({ severe: 0, caution: 1, info: 2 }[b.severity] ?? 3)
+        )
+        .slice(0, 8),
+    [intel?.advisories]
   );
   const nm = briefing.corridor.terrainProfile.at(-1)?.distanceNm.toFixed(0) || "—";
+  const synopsis =
+    briefing.aiSynopsis ||
+    (remoteSynopsis.key === briefing.generatedAt ? remoteSynopsis.value : "") ||
+    fallbackSynopsis(d, findings);
+  const activeChart = CHARTS.find((c) => c.id === chart) || CHARTS[0];
 
   useEffect(() => {
-    setSynopsis(briefing.aiSynopsis || fallbackSynopsis(d, findings));
     if (briefing.aiSynopsis) return;
     let cancelled = false;
     void fetch("/api/brief-narrative", {
@@ -429,7 +474,9 @@ export function BriefPortalModals({
     })
       .then((r) => r.json())
       .then((data) => {
-        if (!cancelled && data?.synopsis) setSynopsis(data.synopsis);
+        if (!cancelled && data?.synopsis) {
+          setRemoteSynopsis({ key: briefing.generatedAt, value: data.synopsis });
+        }
       })
       .catch(() => undefined);
     return () => {
@@ -443,155 +490,277 @@ export function BriefPortalModals({
     <>
       {section === "synopsis" && (
         <ModalShell title="Synopsis" onClose={() => onSection(null)}>
-          <div style={{ fontSize: 13, color: "#9eb2bb", marginBottom: 10 }}>
+          <p className="brief-meta">
             {nm} NM · {briefing.corridor.cruiseAltitudeFt.toLocaleString()} ft · {d.estimatedTimeEnrouteMin} min ·{" "}
             {briefing.corridor.aircraft.modelName}
-          </div>
-          <p style={{ margin: 0, fontSize: 15, lineHeight: 1.65 }}>{synopsis}</p>
-          <p style={{ margin: "14px 0 0", fontSize: 13, color: "#c5d5dc" }}>
+          </p>
+          <p className="brief-lead">{synopsis}</p>
+          <p className="brief-meta">
             Depart {d.recommendedDepRunway || "—"} · Land {d.recommendedArrRunway || "—"} · Fuel {d.fuelRequiredGal} gal ·
             Terrain {d.minTerrainClearanceFt.toLocaleString()} ft
+          </p>
+          <p className="brief-note">
+            Ceiling for VFR rules means the lowest BKN or OVC layer. FEW/SCT are clouds you must remain clear of, but they are
+            not the flight ceiling and alone do not force a NO-GO.
           </p>
         </ModalShell>
       )}
 
       {section === "adverse" && (
-        <ModalShell title="Adverse conditions" onClose={() => onSection(null)}>
-          {adverse.length === 0 && <p style={{ color: "#9eb2bb" }}>No adverse items.</p>}
-          {adverse.map((f) => (
-            <div
-              key={f.id}
-              style={{
-                marginBottom: 8,
-                padding: 12,
-                borderRadius: 12,
-                background: f.severity === "stop" ? "rgba(90,28,22,.55)" : "rgba(70,52,18,.4)",
-                border: `1px solid ${f.severity === "stop" ? "rgba(255,140,110,.4)" : "rgba(244,202,126,.35)"}`,
-              }}
-            >
-              <div style={{ fontWeight: 650, marginBottom: 4 }}>
-                {f.title} · {f.source}
-              </div>
-              <div style={{ fontSize: 13, lineHeight: 1.5 }}>{f.plain}</div>
+        <ModalShell title="VFR decision · 91.155 checklist" onClose={() => onSection(null)}>
+          <div className={`route-brief-verdict ${d.verdict.toLowerCase().replace("_", "-")}`} style={{ marginBottom: 14, display: "inline-block" }}>
+            {d.verdict.replace("_", "-")}
+          </div>
+          <p className="brief-lead" style={{ marginTop: 0 }}>{d.summary}</p>
+
+          {ruleChecksSorted.length > 0 && (
+            <div className="rule-check-list">
+              {ruleChecksSorted.map((r) => (
+                <article key={`${r.id}-${r.result}-${r.detail.slice(0, 24)}`} className={`rule-check ${r.result}`}>
+                  <header>
+                    <b>{r.title}</b>
+                    <em>{r.regulation}</em>
+                    <span>{r.result === "pass" ? "PASS" : r.result === "caution" ? "CAUTION" : "FAIL"}</span>
+                  </header>
+                  <p className="rule-check-detail">{r.detail}</p>
+                </article>
+              ))}
             </div>
-          ))}
+          )}
+
+          {adverse.length > 0 && (
+            <>
+              <h3 className="brief-subhead">Why this decision</h3>
+              {adverse.map((f) => (
+                <div key={f.id} className={`finding-card ${f.severity}`}>
+                  <div className="finding-title">
+                    {f.title} · {f.source}
+                  </div>
+                  <div className="finding-body">{f.plain}</div>
+                </div>
+              ))}
+            </>
+          )}
+
+          {corridorProducts.length > 0 && (
+            <>
+              <h3 className="brief-subhead">Corridor products (raw)</h3>
+              {corridorProducts.map((a) => (
+                <article
+                  key={a.id}
+                  className={`finding-card ${a.severity === "severe" ? "stop" : a.severity === "caution" ? "caution" : ""}`}
+                >
+                  <div className="finding-title">
+                    {a.product} · {a.hazard}
+                  </div>
+                  <code className="route-brief-raw">{a.raw || a.summary}</code>
+                </article>
+              ))}
+            </>
+          )}
+
+          {d.regulatoryCitations?.length > 0 && (
+            <p className="brief-cite">Citations: {d.regulatoryCitations.join(" · ")}</p>
+          )}
         </ModalShell>
       )}
 
       {section === "weather" && (
-        <ModalShell title="Current weather" onClose={() => onSection(null)}>
+        <ModalShell title="Weather · METAR / sky" onClose={() => onSection(null)}>
+          <p className="brief-note">
+            Official ceiling = lowest BKN or OVC. FEW (1–2/8) and SCT (3–4/8) are reported for cloud clearance, not as a
+            ceiling that sets MVFR/IFR by height alone.
+          </p>
           {[weather.origin, weather.destination].map((w) => (
-            <div key={w.icao} style={{ marginBottom: 14 }}>
-              <div style={{ fontWeight: 650 }}>
-                {w.icao} · {w.flightCategory}
+            <div key={w.icao} className="wx-block">
+              <div className="wx-block-head">
+                <strong>
+                  {w.icao} · {w.flightCategory}
+                </strong>
+                <span>{w.source || "wx"}</span>
               </div>
-              <div style={{ fontSize: 13, color: "#c5d5dc", marginTop: 4 }}>
-                Wind {w.windDirDeg.toString().padStart(3, "0")}° at {w.windSpeedKt} kt · Vis {w.visibilitySm ?? "—"} sm
+              <div className="route-brief-grid">
+                <div>
+                  <small>WIND</small>
+                  <b>
+                    {w.windDirDeg.toString().padStart(3, "0")}° / {w.windSpeedKt} KT
+                  </b>
+                </div>
+                <div>
+                  <small>VISIBILITY</small>
+                  <b>{w.visibilitySm != null ? `${w.visibilitySm} SM` : "NR"}</b>
+                </div>
+                <div>
+                  <small>CEILING (BKN/OVC)</small>
+                  <b>{w.ceilingAglFt != null ? `${w.ceilingAglFt.toLocaleString()} FT AGL` : "NONE"}</b>
+                </div>
               </div>
-              <code style={{ display: "block", marginTop: 6, fontSize: 11, color: "#9eb2bb" }}>{w.rawMetar}</code>
+              <p className="brief-meta" style={{ marginTop: 8 }}>
+                {skyLine(w)}
+              </p>
+              <code className="route-brief-raw">{w.rawMetar}</code>
             </div>
           ))}
         </ModalShell>
       )}
 
       {section === "forecast" && (
-        <ModalShell title="Forecasts" onClose={() => onSection(null)}>
-          <button
-            type="button"
-            onClick={() => onSection("charts")}
-            style={{
-              marginBottom: 12,
-              border: "1px solid rgba(255,255,255,.2)",
-              background: "rgba(255,255,255,.06)",
-              color: "#e8f2f5",
-              borderRadius: 8,
-              padding: "8px 10px",
-              cursor: "pointer",
-            }}
-          >
-            Jump to NOAA charts
+        <ModalShell title="Forecasts · TAF along route" onClose={() => onSection(null)}>
+          <button type="button" className="brief-jump" onClick={() => onSection("charts")}>
+            Open NOAA / NWS charts →
           </button>
+          <p className="brief-note">
+            TAFs selected for your scheduled departure and ETA, plus enroute stations near the corridor for a wider picture.
+          </p>
           {[
             {
               label: "Departure",
               icao: briefing.corridor.origin.icao,
+              name: briefing.corridor.origin.name,
               w: intel?.originForecast || weather.origin,
               from: intel?.originPeriodFrom,
               to: intel?.originPeriodTo,
               note: intel?.originForecast.forecastNote,
+              tafRaw: intel?.originTaf?.raw,
             },
+            ...(intel?.enroute || []).map((e) => ({
+              label: "Enroute",
+              icao: e.icao,
+              name: e.name,
+              w: e.weather,
+              from: e.periodFrom,
+              to: e.periodTo,
+              note: e.weather.forecastNote,
+              tafRaw: e.taf.raw,
+            })),
             {
               label: "Arrival",
               icao: briefing.corridor.destination.icao,
+              name: briefing.corridor.destination.name,
               w: intel?.destForecast || weather.destination,
               from: intel?.destPeriodFrom,
               to: intel?.destPeriodTo,
               note: intel?.destForecast.forecastNote,
+              tafRaw: intel?.destTaf?.raw,
             },
           ].map((block) => (
-            <div key={block.label} style={{ marginBottom: 14 }}>
-              <div style={{ fontWeight: 650 }}>
-                {block.icao} {block.label} · {block.w.flightCategory}
+            <div key={`${block.label}-${block.icao}`} className="wx-block">
+              <div className="wx-block-head">
+                <strong>
+                  {block.icao} {block.label}
+                  {block.name ? ` · ${block.name}` : ""} · {block.w.flightCategory}
+                </strong>
+                <span>{block.w.source || "obs"}</span>
               </div>
-              <div style={{ fontSize: 13, color: "#c5d5dc", marginTop: 4 }}>
-                {block.from && block.to ? formatTafWindow(block.from, block.to) : "Observation only"}
-              </div>
-              {block.note && <div style={{ fontSize: 12, color: "#9eb2bb", marginTop: 4 }}>{block.note}</div>}
+              <p className="brief-meta">
+                {block.from && block.to ? formatTafWindow(block.from, block.to) : "Observation only — no TAF window matched"}
+              </p>
+              <p className="brief-meta">{skyLine(block.w)}</p>
+              {block.note && <p className="brief-note">{block.note}</p>}
+              <code className="route-brief-raw">{block.tafRaw || block.w.rawMetar}</code>
             </div>
           ))}
         </ModalShell>
       )}
 
       {section === "charts" && (
-        <ModalShell title="NOAA charts" onClose={() => onSection(null)}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+        <ModalShell title="Charts · NOAA / NWS" onClose={() => onSection(null)}>
+          <div className="chart-picks">
             {CHARTS.map((c) => (
               <button
                 key={c.id}
                 type="button"
-                onClick={() => setChart(c.id)}
-                style={{
-                  border: "1px solid rgba(255,255,255,.2)",
-                  background: chart === c.id ? "#e8f2f5" : "rgba(255,255,255,.06)",
-                  color: chart === c.id ? "#102026" : "#e8f2f5",
-                  borderRadius: 8,
-                  padding: "8px 10px",
-                  cursor: "pointer",
+                className={chart === c.id ? "on" : undefined}
+                onClick={() => {
+                  setChart(c.id);
+                  setChartError(false);
                 }}
               >
                 {c.title}
               </button>
             ))}
           </div>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={`/api/noaa-chart?id=${chart}`}
-            alt=""
-            style={{ width: "100%", borderRadius: 12, display: "block", background: "#eef3f5" }}
-          />
+          <p className="brief-lead" style={{ fontSize: 14 }}>
+            {activeChart.blurb}
+          </p>
+          {chartError ? (
+            <div className="chart-error">
+              <b>Chart failed to load</b>
+              <span>The upstream NOAA/NWS product was unavailable. Try another tab or open aviationweather.gov.</span>
+            </div>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={chart}
+              src={`/api/noaa-chart?id=${chart}`}
+              alt={activeChart.title}
+              className="chart-frame"
+              onError={() => setChartError(true)}
+            />
+          )}
+          <p className="brief-cite">
+            Products proxied from WPC, Aviation Weather Center, NESDIS, and NWS Radar. Verify on official sites before flight.
+          </p>
         </ModalShell>
       )}
 
       {section === "notams" && (
-        <ModalShell title="NOTAMs & hazards" onClose={() => onSection(null)}>
-          {notams.length === 0 && <p style={{ color: "#9eb2bb" }}>No corridor hazards in this pull.</p>}
-          {notams.map((f) => (
-            <div
-              key={f.id}
-              style={{
-                marginBottom: 8,
-                padding: 12,
-                borderRadius: 12,
-                background: "rgba(255,255,255,.04)",
-                border: "1px solid rgba(255,255,255,.1)",
-              }}
-            >
-              <div style={{ fontWeight: 650, marginBottom: 4 }}>
-                {f.title} · {f.source}
-              </div>
-              <div style={{ fontSize: 13, lineHeight: 1.5 }}>{f.plain}</div>
+        <ModalShell title="Route brief · NOTAMs & hazards" onClose={() => onSection(null)}>
+          <div className="route-brief-head">
+            <div>
+              <small>ROUTE</small>
+              <strong>{briefing.corridor.origin.icao} → {briefing.corridor.destination.icao}</strong>
             </div>
-          ))}
+            <span className={`route-brief-verdict ${d.verdict.toLowerCase().replace("_", "-")}`}>
+              {d.verdict.replace("_", "-")}
+            </span>
+            <time>{new Date(briefing.generatedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</time>
+          </div>
+
+          <div className="route-brief-metrics">
+            <span><small>DISTANCE</small><b>{nm} NM</b></span>
+            <span><small>CRUISE</small><b>{briefing.corridor.cruiseAltitudeFt.toLocaleString()} FT</b></span>
+            <span><small>ETE</small><b>{d.estimatedTimeEnrouteMin} MIN</b></span>
+            <span><small>FUEL</small><b>{d.fuelRequiredGal} GAL</b></span>
+          </div>
+
+          <section className="route-brief-section">
+            <div className="route-brief-section-title"><span>01</span><div><b>DEPARTURE</b><small>{briefing.corridor.origin.name}</small></div><em>{weather.origin.flightCategory}</em></div>
+            <div className="route-brief-grid">
+              <div><small>RUNWAY</small><b>{d.recommendedDepRunway || "REVIEW"}</b></div>
+              <div><small>WIND</small><b>{weather.origin.windDirDeg.toString().padStart(3, "0")}° / {weather.origin.windSpeedKt} KT</b></div>
+              <div><small>CEILING</small><b>{weather.origin.ceilingAglFt ? `${weather.origin.ceilingAglFt.toLocaleString()} FT` : "CLEAR"}</b></div>
+            </div>
+            <code className="route-brief-raw">{weather.origin.rawMetar}</code>
+          </section>
+
+          <section className="route-brief-section">
+            <div className="route-brief-section-title"><span>02</span><div><b>ENROUTE CORRIDOR</b><small>Weather advisories · TFRs · PIREPs · route notices</small></div><em>{notams.length ? `${notams.length} ITEM${notams.length === 1 ? "" : "S"}` : "CLEAR"}</em></div>
+            {notams.length === 0 ? (
+              <div className="route-brief-empty"><b>✓ No corridor hazards returned</b><span>The automated route scan found no intersecting TFR, SIGMET, G-AIRMET, CWA, or PIREP items.</span></div>
+            ) : (
+              <div className="route-notam-list">
+                {notams.map((f, index) => (
+                  <article key={f.id} className={`route-notam ${f.severity}`}>
+                    <span className="route-notam-index">{String(index + 1).padStart(2, "0")}</span>
+                    <div><small>{f.source}</small><b>{f.title}</b><p>{f.plain}</p></div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="route-brief-section">
+            <div className="route-brief-section-title"><span>03</span><div><b>ARRIVAL</b><small>{briefing.corridor.destination.name}</small></div><em>{weather.destination.flightCategory}</em></div>
+            <div className="route-brief-grid">
+              <div><small>RUNWAY</small><b>{d.recommendedArrRunway || "REVIEW"}</b></div>
+              <div><small>WIND</small><b>{weather.destination.windDirDeg.toString().padStart(3, "0")}° / {weather.destination.windSpeedKt} KT</b></div>
+              <div><small>CEILING</small><b>{weather.destination.ceilingAglFt ? `${weather.destination.ceilingAglFt.toLocaleString()} FT` : "CLEAR"}</b></div>
+            </div>
+            <code className="route-brief-raw">{weather.destination.rawMetar}</code>
+          </section>
+
+          <p className="route-brief-source">Automated preview from available weather and airspace products. Complete an official NOTAM briefing before flight.</p>
         </ModalShell>
       )}
     </>

@@ -9,6 +9,19 @@ export type BriefFinding = {
   source: string;
 };
 
+/** Red / fail first, then yellow / caution, then green / pass / info. */
+export function severityRank(severity: string): number {
+  const s = severity.toLowerCase();
+  if (s === "stop" || s === "fail" || s === "severe" || s === "danger" || s === "no_go") return 0;
+  if (s === "caution" || s === "warn" || s === "warning" || s === "marginal") return 1;
+  if (s === "info" || s === "pass" || s === "ok" || s === "go") return 2;
+  return 3;
+}
+
+export function bySeverityFirst<T extends { severity?: string; result?: string }>(a: T, b: T): number {
+  return severityRank(a.severity || a.result || "info") - severityRank(b.severity || b.result || "info");
+}
+
 const HAZARD_PLAIN: Record<string, string> = {
   IFR: "Low clouds or poor visibility that can make VFR flying illegal or unsafe",
   ICE: "Icing conditions that can build ice on the airplane",
@@ -29,41 +42,49 @@ export function plainHazard(hazard: string): string {
 
 export function plainBlocker(raw: string): string {
   const t = raw.trim();
-  if (/flight category|IFR|LIFR|MVFR/i.test(t) && /depart|origin|dep/i.test(t))
-    return "Departure weather is below VFR minimums for this plan. Wait for improvement or file IFR.";
-  if (/flight category|IFR|LIFR|MVFR/i.test(t) && /arriv|dest|eta/i.test(t))
-    return "Arrival weather at your ETA is forecast below VFR. Plan an alternate or delay.";
-  if (/ceiling|cloud/i.test(t) && /500|buffer|clearance/i.test(t))
-    return "Your cruise altitude is too close to the cloud layer. Climb, descend, or wait for higher ceilings.";
+  // Always keep AIRMET / SIGMET / CWA / TFR product text — the PIC needs the raw reason.
+  if (/AIRMET|SIGMET|G-AIRMET|CWA|TFR/i.test(t)) {
+    return t.replace(/^NO-GO:\s*/i, "");
+  }
+  if (/FEW|SCT|scattered|not a ceiling/i.test(t) && /clearance/i.test(t))
+    return t; // already plain — keep FEW/SCT vs ceiling distinction
+  if (/91\.155\(c\)|ceiling.*1,?000|beneath the ceiling/i.test(t))
+    return "Ceiling (lowest BKN/OVC) is under 1,000 ft AGL in surface controlled airspace — basic VFR beneath that ceiling is illegal. FEW/SCT alone are not a ceiling.";
+  if (/91\.155\(d\)|visibility.*3 SM|3 SM required/i.test(t))
+    return "Visibility is under 3 statute miles required to take off or land VFR in surface controlled airspace.";
+  if (/flight category|IFR|LIFR/i.test(t) && /depart|origin|dep/i.test(t))
+    return "Departure weather is below basic VFR minimums (ceiling or visibility). Wait, get Special VFR, or file IFR.";
+  if (/flight category|IFR|LIFR/i.test(t) && /arriv|dest|eta/i.test(t))
+    return "Arrival weather at your ETA is below basic VFR. Plan an alternate, delay, or IFR.";
+  if (/BKN|OVC|ceiling/i.test(t) && /500|buffer|cruise|pattern|clearance/i.test(t))
+    return "Your altitude is too close to a real ceiling (BKN/OVC). Climb, descend, or wait — a few/scattered clouds are different.";
   if (/terrain/i.test(t))
-    return "Not enough clearance over terrain along the corridor at this altitude.";
+    return "Not enough clearance over terrain along the corridor at this altitude (91.119).";
   if (/crosswind|cross wind/i.test(t))
     return "Crosswind at the selected runway is above what this airplane demonstrates. Pick another runway or wait.";
   if (/fuel|reserve/i.test(t))
-    return "Fuel on board does not cover the flight plus the required VFR reserve.";
+    return "Fuel on board does not cover the flight plus the required day VFR 30-minute reserve (91.151).";
   if (/weight|gross|overweight/i.test(t))
     return "Airplane is over max takeoff weight with the loaded fuel and passengers.";
-  if (/SIGMET/i.test(t))
-    return "A SIGMET (significant weather) is active near your route — treat as a hard stop for VFR.";
-  if (/AIRMET.*IFR|G-AIRMET IFR/i.test(t))
-    return "An AIRMET for IFR conditions covers part of your corridor.";
+  if (/center of gravity|CG /i.test(t))
+    return "Center of gravity is outside the POH envelope for this loading.";
   if (/PIREP|severe/i.test(t))
     return "A recent pilot report shows severe weather near the corridor.";
-  if (/TFR/i.test(t))
-    return "A temporary flight restriction sits on or near your path. Reroute around it.";
   if (/climb/i.test(t))
     return "Climb performance at today’s density altitude is too weak for a safe departure.";
-  if (/runway.*length|takeoff distance/i.test(t))
+  if (/runway.*length|takeoff distance|landing roll/i.test(t))
     return "The runway is too short for today’s weight and density altitude.";
   return t.replace(/^NO-GO:\s*/i, "").replace(/^\[.*?\]\s*/, "");
 }
 
 export function plainCaution(raw: string): string {
   const t = raw.trim();
+  if (t.includes("\n") && /AIRMET|SIGMET|G-AIRMET|CWA|PIREP/i.test(t)) return t;
   if (/TEMPO|PROB/i.test(t))
     return "The TAF includes temporary or probability weather in your window — conditions may briefly worsen.";
   if (/PIREP/i.test(t)) return "A pilot nearby reported bumps or weather worth watching.";
-  if (/AIRMET|G-AIRMET/i.test(t)) return "An AIRMET is out for the area. Stay alert and have an out.";
+  if (/AIRMET|G-AIRMET/i.test(t))
+    return t.length > 40 ? t : "An AIRMET clips the corridor. Stay alert and have an out.";
   if (/CWA/i.test(t)) return "ATC issued a Center Weather Advisory near the route.";
   if (/cache|unavailable/i.test(t))
     return "Live weather failed to load for a station — we fell back to cached data. Double-check.";
@@ -123,7 +144,7 @@ export function buildFindings(
     });
   });
 
-  return findings;
+  return findings.sort(bySeverityFirst);
 }
 
 function guessSource(text: string): string {

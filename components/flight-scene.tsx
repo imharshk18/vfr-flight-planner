@@ -16,7 +16,7 @@ import type { OrbitControls as OrbitControlsType } from "three-stdlib";
 import type { MissionBriefing } from "@/lib/mission-types";
 import { worldPoint, type TerrainSurface, type SurfaceTile } from "@/lib/terrain-surface";
 
-export type ViewMode = "orbit" | "follow" | "profile";
+export type ViewMode = "orbit" | "explore" | "follow" | "profile";
 export type SceneProps = {
   briefing: MissionBriefing;
   progress: number;
@@ -89,8 +89,12 @@ function TerrainTile({
       <meshStandardMaterial
         map={texture}
         color={texture ? "#ffffff" : "#3d5c54"}
-        roughness={0.72}
-        metalness={0.02}
+        roughness={0.82}
+        metalness={0}
+        // Prefer terrain over the floor plate; kills water-tile z-fighting flicker.
+        polygonOffset
+        polygonOffsetFactor={-1}
+        polygonOffsetUnits={-1}
       />
     </mesh>
   );
@@ -124,9 +128,11 @@ function softCloudTexture() {
 function CloudLayers({
   briefing,
   exaggeration,
+  showLabels,
 }: {
   briefing: MissionBriefing;
   exaggeration: number;
+  showLabels: boolean;
 }) {
   const texture = useMemo(() => softCloudTexture(), []);
   useEffect(() => () => texture.dispose(), [texture]);
@@ -182,18 +188,20 @@ function CloudLayers({
                       </sprite>
                     );
                   })}
-                  <Billboard position={[x + radius * 0.55, altitude + 0.15 * exaggeration, z]}>
-                    <Text
-                      fontSize={span * 0.011}
-                      color={conflict ? "#ffb4a2" : "#e8f2f8"}
-                      outlineWidth={span * 0.0004}
-                      outlineColor="#0a1520"
-                      anchorX="center"
-                      anchorY="middle"
-                    >
-                      {`${deck.coverage} ${deck.baseMslFt.toLocaleString()} FT`}
-                    </Text>
-                  </Billboard>
+                  {showLabels && (
+                    <Billboard position={[x + radius * 0.55, altitude + 0.15 * exaggeration, z]}>
+                      <Text
+                        fontSize={span * 0.011}
+                        color={conflict ? "#ffb4a2" : "#e8f2f8"}
+                        outlineWidth={span * 0.0004}
+                        outlineColor="#0a1520"
+                        anchorX="center"
+                        anchorY="middle"
+                      >
+                        {`${deck.coverage} ${deck.baseMslFt.toLocaleString()} FT`}
+                      </Text>
+                    </Billboard>
+                  )}
                 </group>
               );
             })
@@ -289,6 +297,7 @@ function FlightWorld({
 }: SceneProps) {
   const { camera } = useThree();
   const controls = useRef<OrbitControlsType>(null);
+  const followLook = useRef(new THREE.Vector3());
   const surface = briefing.surface!;
   const span = Math.max(surface.widthKm, surface.depthKm);
   const verdict = briefing.corridor.decision.verdict;
@@ -328,7 +337,9 @@ function FlightWorld({
     if (!path.length) return;
     const mid = path[Math.floor(path.length / 2)];
     if (view === "profile") {
-      camera.position.set(span * 0.85, span * 0.14, mid.z);
+      const routeDir = path.at(-1)!.clone().sub(path[0]).setY(0).normalize();
+      const side = new THREE.Vector3(-routeDir.z, 0, routeDir.x);
+      camera.position.copy(mid.clone().addScaledVector(side, span * 0.78).add(new THREE.Vector3(0, span * 0.16, 0)));
       camera.lookAt(mid);
       controls.current?.target.copy(mid);
     } else if (view === "follow") {
@@ -336,10 +347,15 @@ function FlightWorld({
       camera.position.copy(
         point.clone().addScaledVector(dir, -span * 0.1).add(new THREE.Vector3(0, span * 0.045, 0))
       );
-      camera.lookAt(point.clone().addScaledVector(dir, span * 0.06));
-      controls.current?.target.copy(point);
+      followLook.current.copy(point.clone().addScaledVector(dir, span * 0.06));
+      camera.lookAt(followLook.current);
+    } else if (view === "explore") {
+      // Free 3D — set framing once per enter/reset; do not fight OrbitControls.
+      camera.position.set(span * 0.42, span * 0.28, span * 0.55);
+      camera.lookAt(mid);
+      controls.current?.target.copy(mid);
     } else {
-      // Brief: corridor centered in the Cessna windshield hole
+      // Cockpit brief: corridor centered in the Cessna windshield hole
       const dist = briefZoom ? 0.62 : 0.38;
       const elev = briefZoom ? 0.28 : 0.42;
       camera.position.set(span * dist * 0.35, span * dist * elev, span * dist * 0.85);
@@ -348,7 +364,19 @@ function FlightWorld({
       controls.current?.target.copy(look);
     }
     controls.current?.update();
-  }, [camera, span, view, reset, briefing.corridor.cruiseAltitudeFt, exaggeration, briefZoom, path, point, direction]);
+    // Explore: only re-frame on view/reset — path identity changes must not steal the camera.
+    // Follow: omit point/direction so progress ticks don't fight playback lerp.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    camera,
+    span,
+    view,
+    reset,
+    briefing.corridor.cruiseAltitudeFt,
+    exaggeration,
+    briefZoom,
+    view === "explore" ? reset : path,
+  ]);
 
   useFrame((_, delta) => {
     if (!controls.current) return;
@@ -359,11 +387,11 @@ function FlightWorld({
       .addScaledVector(dir, -span * 0.11)
       .add(new THREE.Vector3(span * 0.02, span * 0.048, span * 0.01));
     camera.position.lerp(desired, 1 - Math.exp(-delta * 2.8));
-    controls.current.target.lerp(
-      point.clone().addScaledVector(dir, span * 0.05),
-      1 - Math.exp(-delta * 2.8)
+    followLook.current.lerp(
+      point.clone().addScaledVector(dir, span * 0.065),
+      1 - Math.exp(-delta * 2.2)
     );
-    controls.current.update();
+    camera.lookAt(followLook.current);
   });
 
   const color = ambience.path;
@@ -381,10 +409,15 @@ function FlightWorld({
         color="#fff6e8"
         castShadow
       />
-      {/* Floor plate so the corridor never reads as empty void */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
-        <circleGeometry args={[span * 0.75, 64]} />
-        <meshStandardMaterial color={ambience.bg} roughness={1} metalness={0} />
+      {/* Floor well below sea level so flat water tiles never depth-fight it */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -Math.max(0.35, span * 0.012), 0]} receiveShadow>
+        <circleGeometry args={[span * 0.85, 64]} />
+        <meshStandardMaterial
+          color={ambience.bg}
+          roughness={1}
+          metalness={0}
+          depthWrite={false}
+        />
       </mesh>
 
       {surface.tiles.map((tile) => (
@@ -433,23 +466,25 @@ function FlightWorld({
               <cylinderGeometry args={[span * 0.0012, span * 0.0012, span * 0.04, 8]} />
               <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} />
             </mesh>
-            <Billboard position={[x, path[pathIdx].y + span * 0.03, z]}>
-              <Text
-                fontSize={span * 0.012}
-                color="#e8f7f6"
-                outlineWidth={span * 0.0006}
-                outlineColor="#0a1520"
-                anchorX="center"
-                anchorY="bottom"
-              >
-                {`${index ? "ARR" : "DEP"} ${a.icao}${rwy ? ` RWY ${rwy}` : ""}`}
-              </Text>
-            </Billboard>
+            {view !== "follow" && (
+              <Billboard position={[x, path[pathIdx].y + span * 0.03, z]}>
+                <Text
+                  fontSize={span * 0.012}
+                  color="#e8f7f6"
+                  outlineWidth={span * 0.0006}
+                  outlineColor="#0a1520"
+                  anchorX="center"
+                  anchorY="bottom"
+                >
+                  {`${index ? "ARR" : "DEP"} ${a.icao}${rwy ? ` RWY ${rwy}` : ""}`}
+                </Text>
+              </Billboard>
+            )}
           </group>
         );
       })}
 
-      {briefing.flightProfile &&
+      {view !== "follow" && briefing.flightProfile &&
         (() => {
           const samples = briefing.flightProfile.samples;
           const markers: Array<{ label: string; i: number }> = [];
@@ -478,7 +513,13 @@ function FlightWorld({
           });
         })()}
 
-      {clouds && <CloudLayers briefing={briefing} exaggeration={exaggeration} />}
+      {clouds && (
+        <CloudLayers
+          briefing={briefing}
+          exaggeration={exaggeration}
+          showLabels={view !== "follow"}
+        />
+      )}
       <Airplane position={point} direction={direction} size={span * 0.009} />
 
       <OrbitControls
@@ -487,10 +528,14 @@ function FlightWorld({
         enableDamping
         dampingFactor={0.08}
         enabled={view !== "follow"}
+        enableRotate={view !== "follow"}
+        enableZoom={view !== "follow"}
+        enablePan={view === "explore" || view === "profile"}
+        screenSpacePanning={view === "explore"}
         autoRotate={false}
-        maxPolarAngle={Math.PI / 2 - 0.04}
-        minDistance={span * 0.08}
-        maxDistance={span * 1.4}
+        maxPolarAngle={Math.PI / 2 - 0.02}
+        minDistance={span * 0.06}
+        maxDistance={span * 2.4}
       />
 
       {/* Soft cinematic grade through the windshield */}
@@ -517,11 +562,12 @@ function FlightWorld({
 export default function FlightScene(props: SceneProps) {
   return (
     <Canvas
-      dpr={[1, 2]}
-      camera={{ position: [30, 18, 40], near: 0.01, far: 4000, fov: 48 }}
+      dpr={[1, 1.75]}
+      camera={{ position: [30, 18, 40], near: 0.15, far: 8000, fov: 48 }}
       gl={{
-        antialias: false,
+        antialias: true,
         alpha: false,
+        logarithmicDepthBuffer: true,
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 1.08,
         powerPreference: "high-performance",

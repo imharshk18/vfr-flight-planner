@@ -344,6 +344,23 @@ function computeFlightCategory(
   return "VFR";
 }
 
+/** Normalize AWC / METAR visibility into statute miles. */
+function parseVisibilitySm(raw: unknown): number {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw !== "string" || !raw.trim()) return 10;
+  const s = raw.trim().toUpperCase().replace(/SM$/, "");
+  if (s.endsWith("+")) {
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : 10;
+  }
+  if (s.includes("/")) {
+    const [a, b] = s.split("/").map(Number);
+    if (b) return a / b;
+  }
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 10;
+}
+
 function computeDensityAltitude(
   elevationFt: number,
   altimeterInHg: number,
@@ -380,7 +397,8 @@ export async function fetchMetar(
     const tempC: number = obs.temp ?? 15;
     const dewpointC: number = obs.dewp ?? 10;
     const altimeterInHg: number = obs.altim ? obs.altim / 33.8639 : 29.92;
-    const visibilitySm: number = obs.visib ?? 10;
+    // AWC often returns visib as number, "10+", or "1/2"
+    const visibilitySm = parseVisibilitySm(obs.visib);
 
     const cloudDecks: CloudDeck[] = [];
     const sky: Array<{ cover: string; base: number }> = obs.clouds ?? [];

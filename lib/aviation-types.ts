@@ -51,14 +51,31 @@ export type AircraftProfile = {
   serviceCeilingFt: number;
   seaLevelClimbFpm: number;
   maxCrosswindKt: number;
+  maxRampWeightLbs?: number;
+  emptyArmIn?: number;
+  frontSeatArmIn?: number;
+  rearSeatArmIn?: number;
+  fuelArmIn?: number;
+  baggageArmIn?: number;
+  aftCgLimitIn?: number;
   isCustom?: boolean;
 };
 
 export type WeightAndBalanceState = {
   pilotWeightLbs: number;
   passengerWeightLbs: number;
+  rearLeftWeightLbs: number;
+  rearRightWeightLbs: number;
   baggageLbs: number;
   fuelGallons: number;
+};
+
+export type VfrRuleCheck = {
+  id: string;
+  regulation: string;
+  title: string;
+  result: "pass" | "caution" | "fail";
+  detail: string;
 };
 
 export type VfrCorridorDecision = {
@@ -67,6 +84,8 @@ export type VfrCorridorDecision = {
   blockers: string[];
   cautions: string[];
   regulatoryCitations: string[];
+  /** Step-by-step private-pilot VFR checklist for the brief UI */
+  ruleChecks?: VfrRuleCheck[];
   minTerrainClearanceFt: number;
   cloudBufferFt: number;
   calculatedClimbRateFpm: number;
@@ -77,6 +96,9 @@ export type VfrCorridorDecision = {
   fuelRequiredGal: number;
   reserveFuelRemainingGal: number;
   totalRampWeightLbs: number;
+  takeoffWeightLbs: number;
+  centerOfGravityIn: number;
+  cgStatus: "IN_ENVELOPE" | "OUT_OF_ENVELOPE";
   weightStatus: "LEGAL" | "OVERWEIGHT";
   /** Briefing highlights for ForeFlight-style summary */
   briefingHighlights?: string[];

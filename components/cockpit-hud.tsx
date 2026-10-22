@@ -84,7 +84,7 @@ export default function CockpitHud({
 
   const statusTone: GaugeTone =
     d.verdict === "GO" ? "ok" : d.verdict === "MARGINAL" ? "warn" : "danger";
-  const statusLine = d.blockers[0] || d.cautions[0] || d.summary;
+  const statusLine = (d.blockers[0] || d.cautions[0] || d.summary).split("\n")[0];
   const hdg = useMemo(() => {
     const y =
       Math.sin(((destination.lon - origin.lon) * Math.PI) / 180) *
@@ -102,8 +102,27 @@ export default function CockpitHud({
   return (
     <>
       <div className={`ck-shell${ready ? " is-on" : ""}`} data-verdict={d.verdict}>
+        {/* Aspect-locked rig so dial % matches cockpit-frame-v2 wells exactly */}
+        <div className="ck-rig">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className="ck-frame" src="/cockpit/cessna-frame.png" alt="" draggable={false} />
+        <img
+          className="ck-frame"
+          src="/cockpit/cockpit-frame-v2.png"
+          alt=""
+          draggable={false}
+        />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="ck-yoke" src="/cockpit/pilot-yoke.png" alt="" draggable={false} />
+
+        <div className="ck-windshield-glare" aria-hidden />
+        <div className="ck-horizon-ticks" aria-hidden>
+          <i />
+          <span>−10</span>
+          <b />
+          <span>0</span>
+          <i />
+          <span>+10</span>
+        </div>
 
         <header className="ck-strip">
           <button type="button" className="ck-box" onClick={onEdit}>
@@ -143,32 +162,37 @@ export default function CockpitHud({
         </header>
 
         <button type="button" className="ck-fly" onClick={onVisualize}>
-          VISUALIZE FLIGHT
+          <span>VISUALIZE FLIGHT</span>
+          <small>ENTER ROUTE REHEARSAL</small>
         </button>
 
         <aside className="ck-avionics" aria-hidden>
-          <div>
-            <em>COM 1</em>
-            <b>118.300</b>
+          <div className="ck-avionics-slot">
+            <span>
+              <em>COM 1</em>
+              <b>118.300</b>
+            </span>
+            <span>
+              <em>NAV 1</em>
+              <b>114.10</b>
+            </span>
           </div>
-          <div>
-            <em>NAV 1</em>
-            <b>114.10</b>
-          </div>
-          <div>
-            <em>XPDR</em>
-            <b>1200</b>
-          </div>
-          <div>
-            <em>HDG</em>
-            <b>{hdg}°</b>
+          <div className="ck-avionics-slot">
+            <span>
+              <em>XPDR</em>
+              <b>1200</b>
+            </span>
+            <span>
+              <em>HDG</em>
+              <b>{hdg}°</b>
+            </span>
           </div>
         </aside>
 
         <div className="ck-panel">
           <Dial
             slot="a1"
-            label="NOTAMS"
+            label="BRIEF / NOTAMS"
             tone={notamCount ? "warn" : "ok"}
             ring={notamCount ? Math.min(1, notamCount / 6) : 0.18}
             onClick={() => setSection("notams")}
@@ -250,7 +274,7 @@ export default function CockpitHud({
           <Dial
             slot="b2"
             label="WEIGHT"
-            tone={d.weightStatus === "OVERWEIGHT" ? "danger" : "ok"}
+            tone={d.weightStatus === "OVERWEIGHT" || d.cgStatus === "OUT_OF_ENVELOPE" ? "danger" : "ok"}
             ring={Math.min(1, d.totalRampWeightLbs / aircraft.maxGrossWeightLbs)}
             onClick={() => setSection("synopsis")}
             delay={240}
@@ -260,7 +284,7 @@ export default function CockpitHud({
               <i>LB</i>
             </b>
             <small>
-              {d.weightStatus} · {aircraft.maxGrossWeightLbs.toLocaleString()}
+              {d.cgStatus === "IN_ENVELOPE" ? `${d.centerOfGravityIn} IN CG` : "CG OUT"}
             </small>
           </Dial>
 
@@ -273,8 +297,9 @@ export default function CockpitHud({
             delay={280}
           >
             <b>NOAA</b>
-            <small>SigWx · Winds</small>
+            <small>Surface · Radar</small>
           </Dial>
+        </div>
         </div>
       </div>
 
