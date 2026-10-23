@@ -101,7 +101,10 @@ export default function CockpitHud({
 
   return (
     <>
-      <div className={`ck-shell${ready ? " is-on" : ""}`} data-verdict={d.verdict}>
+      <div
+        className={`ck-shell${ready ? " is-on" : ""}${section ? " is-briefing" : ""}`}
+        data-verdict={d.verdict}
+      >
         {/* Aspect-locked rig so dial % matches cockpit-frame-v2 wells exactly */}
         <div className="ck-rig">
         {/* eslint-disable-next-line @next/next/no-img-element */}

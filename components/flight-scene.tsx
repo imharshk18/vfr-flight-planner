@@ -241,26 +241,6 @@ function PathTube({
   );
 }
 
-/** Wings-level attitude along `direction` (avoids arbitrary roll from setFromUnitVectors). */
-function attitudeFromDirection(direction: THREE.Vector3, out = new THREE.Quaternion()) {
-  const forward = direction.clone();
-  if (forward.lengthSq() < 1e-10) return out.identity();
-  forward.normalize();
-
-  const worldUp = new THREE.Vector3(0, 1, 0);
-  // right = up × forward; when climbing steep, forward ≈ up so pick a fallback
-  const right = new THREE.Vector3().crossVectors(worldUp, forward);
-  if (right.lengthSq() < 1e-6) {
-    right.crossVectors(new THREE.Vector3(0, 0, 1), forward);
-  }
-  right.normalize();
-  const up = new THREE.Vector3().crossVectors(forward, right).normalize();
-
-  // Model nose is −Z → map local (+X,+Y,+Z) to (right, up, −forward)
-  const m = new THREE.Matrix4().makeBasis(right, up, forward.clone().negate());
-  return out.setFromRotationMatrix(m);
-}
-
 function Airplane({
   position,
   direction,
@@ -271,11 +251,15 @@ function Airplane({
   size: number;
 }) {
   const group = useRef<THREE.Group>(null);
-  const q = useRef(new THREE.Quaternion());
+  const lookTarget = useRef(new THREE.Vector3());
   useFrame(() => {
     if (!group.current) return;
     group.current.position.copy(position);
-    group.current.quaternion.copy(attitudeFromDirection(direction, q.current));
+    // Three.js lookAt aims local −Z (our nose) at the target, keeping wings level to +Y.
+    const dir = direction.lengthSq() > 1e-10 ? direction : new THREE.Vector3(0, 0, -1);
+    lookTarget.current.copy(position).add(dir);
+    group.current.up.set(0, 1, 0);
+    group.current.lookAt(lookTarget.current);
   });
   return (
     <group ref={group} scale={size}>
@@ -474,21 +458,24 @@ function FlightWorld({
         const rwy = index
           ? briefing.corridor.decision.recommendedArrRunway
           : briefing.corridor.decision.recommendedDepRunway;
+        // Short beacons — DEP mint / ARR amber (old poles were span-scaled skyscrapers)
+        const marker = index ? "#ffb14a" : "#5ef0d0";
+        const poleH = Math.min(0.55, Math.max(0.18, span * 0.0035));
         return (
           <group key={a.icao}>
-            <mesh position={[x, y + 0.05, z]} rotation={[-Math.PI / 2, 0, 0]}>
-              <ringGeometry args={[span * 0.007, span * 0.01, 48]} />
-              <meshBasicMaterial color={color} side={THREE.DoubleSide} transparent opacity={0.9} />
+            <mesh position={[x, y + 0.04, z]} rotation={[-Math.PI / 2, 0, 0]}>
+              <ringGeometry args={[span * 0.008, span * 0.012, 48]} />
+              <meshBasicMaterial color={marker} side={THREE.DoubleSide} transparent opacity={0.95} />
             </mesh>
-            <mesh position={[x, y + span * 0.02, z]}>
-              <cylinderGeometry args={[span * 0.0012, span * 0.0012, span * 0.04, 8]} />
-              <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} />
+            <mesh position={[x, y + poleH * 0.5, z]}>
+              <cylinderGeometry args={[span * 0.0007, span * 0.0011, poleH, 10]} />
+              <meshStandardMaterial color={marker} emissive={marker} emissiveIntensity={0.55} />
             </mesh>
             {view !== "follow" && (
-              <Billboard position={[x, path[pathIdx].y + span * 0.03, z]}>
+              <Billboard position={[x, path[pathIdx].y + span * 0.025, z]}>
                 <Text
-                  fontSize={span * 0.012}
-                  color="#e8f7f6"
+                  fontSize={span * 0.011}
+                  color={marker}
                   outlineWidth={span * 0.0006}
                   outlineColor="#0a1520"
                   anchorX="center"

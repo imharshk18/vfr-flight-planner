@@ -892,9 +892,10 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(2, 8, 12, .48);
-  backdrop-filter: blur(16px) saturate(.8);
-  animation: briefBackdropIn .28s ease both;
+  /* Solid scrim — blur over live WebGL causes the cockpit “twitch” */
+  background: rgba(2, 8, 12, .78);
+  backdrop-filter: none;
+  animation: none;
 }
 
 .brief-paper {
@@ -915,7 +916,19 @@
     inset 0 0 0 1px rgba(255,255,255,.45);
   font-family: var(--ck-display-font);
   transform-origin: 42% 100%;
-  animation: briefPaperIn .46s cubic-bezier(.16,1,.3,1) both;
+  animation: briefPaperIn .22s ease-out both;
+}
+
+/* Freeze cockpit motion while a brief portal is open */
+.ck-shell.is-briefing .ck-windshield-glare,
+.ck-shell.is-briefing .ck-fly,
+.ck-shell.is-briefing .ck-yoke,
+.ck-shell.is-briefing .ck-dial {
+  animation-play-state: paused !important;
+}
+.ck-shell.is-briefing .ck-fly {
+  opacity: 0.35;
+  pointer-events: none;
 }
 
 .brief-paper:has(.chart-frame),
