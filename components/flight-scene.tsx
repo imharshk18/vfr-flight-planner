@@ -255,9 +255,10 @@ function Airplane({
   useFrame(() => {
     if (!group.current) return;
     group.current.position.copy(position);
-    // Three.js lookAt aims local −Z (our nose) at the target, keeping wings level to +Y.
-    const dir = direction.lengthSq() > 1e-10 ? direction : new THREE.Vector3(0, 0, -1);
-    lookTarget.current.copy(position).add(dir);
+    // lookAt aims local −Z at the target. Path travel is `direction`; aiming
+    // opposite of travel corrects the mesh (tail/canopy layout vs −Z convention).
+    const dir = direction.lengthSq() > 1e-10 ? direction.clone() : new THREE.Vector3(0, 0, -1);
+    lookTarget.current.copy(position).sub(dir);
     group.current.up.set(0, 1, 0);
     group.current.lookAt(lookTarget.current);
   });
@@ -352,10 +353,17 @@ function FlightWorld({
       followLook.current.copy(point.clone().addScaledVector(dir, span * 0.06));
       camera.lookAt(followLook.current);
     } else if (view === "explore") {
-      // Free 3D — set framing once per enter/reset; do not fight OrbitControls.
-      camera.position.set(span * 0.42, span * 0.28, span * 0.55);
-      camera.lookAt(mid);
-      controls.current?.target.copy(mid);
+      // Free 3D — orbit/zoom anchored on the aircraft, not path midpoint.
+      const focus = point.clone();
+      const dir = direction.lengthSq() > 1e-10 ? direction.clone().normalize() : new THREE.Vector3(0, 0, 1);
+      camera.position.copy(
+        focus
+          .clone()
+          .addScaledVector(dir, -span * 0.2)
+          .add(new THREE.Vector3(span * 0.12, span * 0.12, span * 0.08))
+      );
+      camera.lookAt(focus);
+      controls.current?.target.copy(focus);
     } else {
       // Cockpit brief: corridor centered in the Cessna windshield hole
       const dist = briefZoom ? 0.62 : 0.38;
@@ -382,18 +390,25 @@ function FlightWorld({
 
   useFrame((_, delta) => {
     if (!controls.current) return;
-    if (view !== "follow") return;
-    const dir = direction.clone().normalize();
-    const desired = point
-      .clone()
-      .addScaledVector(dir, -span * 0.11)
-      .add(new THREE.Vector3(span * 0.02, span * 0.048, span * 0.01));
-    camera.position.lerp(desired, 1 - Math.exp(-delta * 2.8));
-    followLook.current.lerp(
-      point.clone().addScaledVector(dir, span * 0.065),
-      1 - Math.exp(-delta * 2.2)
-    );
-    camera.lookAt(followLook.current);
+    if (view === "follow") {
+      const dir = direction.clone().normalize();
+      const desired = point
+        .clone()
+        .addScaledVector(dir, -span * 0.11)
+        .add(new THREE.Vector3(span * 0.02, span * 0.048, span * 0.01));
+      camera.position.lerp(desired, 1 - Math.exp(-delta * 2.8));
+      followLook.current.lerp(
+        point.clone().addScaledVector(dir, span * 0.065),
+        1 - Math.exp(-delta * 2.2)
+      );
+      camera.lookAt(followLook.current);
+      return;
+    }
+    if (view === "explore") {
+      // Zoom/orbit always toward the airplane as it moves along the corridor.
+      controls.current.target.lerp(point, 1 - Math.exp(-delta * 4));
+      controls.current.update();
+    }
   });
 
   const color = ambience.path;
