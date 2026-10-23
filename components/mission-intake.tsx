@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Plane, SlidersHorizontal } from "lucide-react";
 import { DEFAULT_AIRCRAFT } from "@/lib/aircraft-fleet";
 import { DEMO_ROUTES, intakeFromDemo, type DemoRoute } from "@/lib/demo-routes";
@@ -15,14 +15,14 @@ function defaultDepartureLocal(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function blankLiveIntake(): MissionIntake {
+function blankLiveIntake(departureLocal = ""): MissionIntake {
   return {
     originIcao: "KMSN",
     destinationIcao: "KRFD",
     routeMode: "straight",
     altitudeMode: "recommended",
     cruiseAltitudeFt: 5500,
-    departureLocal: defaultDepartureLocal(),
+    departureLocal,
     aircraftId: "c172s",
     wb: {
       pilotWeightLbs: 170,
@@ -48,11 +48,18 @@ export default function MissionIntakeModal({
   onSubmit: (intake: MissionIntake, demo?: DemoRoute) => void;
   onClose?: () => void;
 }) {
-  const [form, setForm] = useState<MissionIntake>(
-    initial || { ...blankLiveIntake(), departureLocal: defaultDepartureLocal() }
-  );
+  const [form, setForm] = useState<MissionIntake>(() => initial ?? blankLiveIntake(""));
   // null = live METAR/TAF/NOTAM pipeline (default)
   const [demoId, setDemoId] = useState<string | null>(initial ? null : null);
+
+  // Avoid new Date() during prerender — fill after mount / on user actions only.
+  useEffect(() => {
+    if (initial?.departureLocal) return;
+    setForm((f) =>
+      f.departureLocal ? f : { ...f, departureLocal: defaultDepartureLocal() }
+    );
+  }, [initial?.departureLocal]);
+
   const aircraft = DEFAULT_AIRCRAFT.find((a) => a.id === form.aircraftId)!;
   const loadingResult = calculateLoading(aircraft, form.wb);
   const change = <K extends keyof MissionIntake>(key: K, value: MissionIntake[K]) =>

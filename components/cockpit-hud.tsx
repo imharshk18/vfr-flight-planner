@@ -162,8 +162,8 @@ export default function CockpitHud({
         </header>
 
         <button type="button" className="ck-fly" onClick={onVisualize}>
-          <span>VISUALIZE FLIGHT</span>
-          <small>ENTER ROUTE REHEARSAL</small>
+          <span>VISUALIZE YOUR FLIGHT</span>
+          <small>See the weather along your route before you fly</small>
         </button>
 
         <aside className="ck-avionics" aria-hidden>

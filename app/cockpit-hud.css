@@ -72,9 +72,10 @@
   transition: opacity 0.45s ease;
   font-family: var(--ck-display-font);
   color: var(--ck-ink);
+  /* Transparent so Canvas shows through the windshield alpha */
+  background: transparent;
   display: grid;
   place-items: center;
-  background: #07090a;
 }
 .ck-shell.is-on {
   opacity: 1;
@@ -85,7 +86,10 @@
   cursor: pointer;
 }
 
-/* Match cockpit-frame-v2.png (1672×941) so dial centers = well centers */
+/*
+  Lock to cockpit-frame-v2.png aspect (1672×941) so dial % === well centers.
+  Never use object-fit:cover here — that shifts the wells under the dials.
+*/
 .ck-rig {
   position: relative;
   width: min(100vw, calc(100dvh * 1672 / 941));
@@ -94,6 +98,7 @@
   max-width: 100%;
   max-height: 100%;
   overflow: hidden;
+  background: transparent;
 }
 
 .ck-frame {
@@ -359,36 +364,14 @@
   }
 }
 
-/* Well slots — tuned to cessna-frame.png */
-.ck-slot-a1 {
-  left: 18.5%;
-  top: 63.5%;
-}
-.ck-slot-a2 {
-  left: 32.5%;
-  top: 62.5%;
-  width: min(13.5vw, 168px);
-}
-.ck-slot-a3 {
-  left: 46.5%;
-  top: 63%;
-}
-.ck-slot-a4 {
-  left: 60.5%;
-  top: 63.5%;
-}
-.ck-slot-b1 {
-  left: 18.5%;
-  top: 83.5%;
-}
-.ck-slot-b2 {
-  left: 32.5%;
-  top: 83.5%;
-}
-.ck-slot-b3 {
-  left: 46.5%;
-  top: 83.5%;
-}
+/* Well slots — measured on cockpit-frame-v2.png (must match .ck-rig aspect) */
+.ck-slot-a1 { left: 23.3%; top: 67.6%; }
+.ck-slot-a2 { left: 34.9%; top: 67.6%; }
+.ck-slot-a3 { left: 46.1%; top: 67.6%; }
+.ck-slot-a4 { left: 57.5%; top: 67.6%; }
+.ck-slot-b1 { left: 40.0%; top: 85.1%; }
+.ck-slot-b2 { left: 51.5%; top: 84.9%; }
+.ck-slot-b3 { left: 62.7%; top: 84.9%; }
 
 .ck-dial-glass {
   position: absolute;
@@ -591,18 +574,26 @@
 .flight-deck.brief-world .scene-stage {
   height: 100dvh;
   min-height: 100dvh;
+  background: transparent;
 }
 
+/* Soft vignette only — never paint over the corridor */
 .flight-deck.brief-world .scene-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
   z-index: 7;
+  pointer-events: none;
+  background: transparent;
   box-shadow:
-    inset 0 0 100px rgba(5, 10, 12, 0.22),
-    inset 0 80px 100px rgba(3, 8, 12, 0.14);
+    inset 0 0 100px rgba(5, 10, 12, 0.18),
+    inset 0 80px 90px rgba(3, 8, 12, 0.1);
 }
 
 .ck-shell {
-  isolation: isolate;
-  overflow: hidden;
+  /* Do not isolate — keep windshield alpha compositing over the Canvas */
+  overflow: visible;
+  background: transparent !important;
 }
 
 .scene-stage > .ck-shell {
@@ -701,9 +692,10 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
-  min-width: 230px;
-  padding: 13px 25px 11px;
+  gap: 6px;
+  min-width: 280px;
+  max-width: min(420px, 72vw);
+  padding: 14px 28px 12px;
   border-radius: 10px;
   border: 1px solid rgba(142, 255, 247, .7);
   background: linear-gradient(180deg, rgba(27, 54, 62, .66), rgba(5, 18, 25, .56));
@@ -716,14 +708,19 @@
 
 .ck-fly span {
   font-size: 12px;
-  letter-spacing: .22em;
+  letter-spacing: .18em;
+  text-align: center;
 }
 
 .ck-fly small {
   font-family: var(--ck-data-font);
-  font-size: 7px;
-  letter-spacing: .17em;
-  color: rgba(207, 240, 241, .6);
+  font-size: 8px;
+  letter-spacing: .06em;
+  line-height: 1.35;
+  text-align: center;
+  text-transform: none;
+  color: rgba(207, 240, 241, .72);
+  max-width: 34ch;
 }
 
 .ck-horizon-ticks {
