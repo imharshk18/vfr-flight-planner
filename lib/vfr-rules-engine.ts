@@ -164,6 +164,12 @@ export interface RulesEngineInput {
   simulateMarineLayerBurnOff?: boolean;
   pireps?: PirepReport[];
   advisories?: HazardAdvisory[];
+  /** Mid-corridor METAR/TAF samples — used for enroute VFR category / ceiling / vis */
+  enrouteStations?: Array<{
+    icao: string;
+    name?: string;
+    weather: StationWeather;
+  }>;
   depRunway?: RunwayRecommendation;
   arrRunway?: RunwayRecommendation;
   profileTimeMin?: number;
@@ -187,6 +193,7 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
     simulateMarineLayerBurnOff = false,
     pireps = [],
     advisories = [],
+    enrouteStations = [],
     depRunway,
     arrRunway,
     profileTimeMin,
@@ -202,18 +209,19 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
   const citations: string[] = [];
   const briefingHighlights: string[] = [];
   const ruleChecks: VfrRuleCheck[] = [];
+  let ruleSeq = 0;
 
   const pushFail = (id: string, regulation: string, title: string, detail: string) => {
     blockers.push(detail);
     citations.push(regulation);
-    ruleChecks.push({ id, regulation, title, result: "fail", detail });
+    ruleChecks.push({ id: `${id}-${++ruleSeq}`, regulation, title, result: "fail", detail });
   };
   const pushCaution = (id: string, regulation: string, title: string, detail: string) => {
     cautions.push(detail);
-    ruleChecks.push({ id, regulation, title, result: "caution", detail });
+    ruleChecks.push({ id: `${id}-${++ruleSeq}`, regulation, title, result: "caution", detail });
   };
   const pushPass = (id: string, regulation: string, title: string, detail: string) => {
-    ruleChecks.push({ id, regulation, title, result: "pass", detail });
+    ruleChecks.push({ id: `${id}-${++ruleSeq}`, regulation, title, result: "pass", detail });
   };
 
   // ---- 1. Weight and Balance ----
@@ -547,13 +555,73 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
     );
   }
 
+  // ---- Enroute stations along the corridor (not just dep/arr) ----
+  type CorridorWx = { icao: string; label: string; wx: StationWeather };
+  const corridorWx: CorridorWx[] = [
+    { icao: origin.icao, label: "Departure", wx: depWx },
+    ...enrouteStations.map((s) => ({
+      icao: s.icao,
+      label: s.name || s.icao,
+      wx: s.weather,
+    })),
+    { icao: destination.icao, label: "Arrival", wx: effectiveDestWeather },
+  ];
+
+  let enrouteWxFail = false;
+  for (const stop of enrouteStations) {
+    const ceil = officialCeilingAgl(stop.weather);
+    const vis = visSm(stop.weather);
+    const cat = catFrom(ceil, vis);
+    if (cat === "IFR" || cat === "LIFR") {
+      enrouteWxFail = true;
+      pushFail(
+        "enroute-cat",
+        "14 CFR 91.155 — basic VFR",
+        `Enroute ${stop.icao} flight category`,
+        `${stop.icao}${stop.name ? ` (${stop.name})` : ""} along the corridor is ${cat}` +
+          `${ceil != null ? ` · ceiling ${ceil.toLocaleString()} ft AGL` : ""}` +
+          `${vis != null ? ` · vis ${vis} SM` : ""}. VFR through that weather is not legal/safe — delay, reroute, or stay clear.`
+      );
+    } else if (vis != null && vis < 3) {
+      enrouteWxFail = true;
+      pushFail(
+        "enroute-vis",
+        "14 CFR 91.155(a) — 3 SM",
+        `Enroute ${stop.icao} visibility`,
+        `${stop.icao} reports ${vis} SM — below the 3 SM Class E VFR minimum along the route.`
+      );
+    } else if (cat === "MVFR") {
+      pushCaution(
+        "enroute-mvfr",
+        "14 CFR 91.155 — basic VFR",
+        `Enroute ${stop.icao} MVFR`,
+        `${stop.icao}${stop.name ? ` (${stop.name})` : ""} is MVFR` +
+          `${ceil != null ? ` · ceiling ${ceil.toLocaleString()} ft AGL` : ""}` +
+          `${vis != null ? ` · vis ${vis} SM` : ""}. Legal VFR may exist — leave an out and watch trends.`
+      );
+    }
+  }
+  if (enrouteStations.length && !enrouteWxFail) {
+    const ids = enrouteStations.map((s) => s.icao).join(", ");
+    pushPass(
+      "enroute-cat",
+      "14 CFR 91.155",
+      "Enroute corridor weather",
+      `Corridor stations (${ids || "none"}) support basic VFR at the sampled times — not only dep/arr.`
+    );
+  } else if (!enrouteStations.length) {
+    pushCaution(
+      "enroute-cat",
+      "14 CFR 91.155",
+      "Enroute corridor weather",
+      "No mid-route TAF/METAR stations sampled for this corridor — decision is based on departure and arrival only. Cross-check enroute weather."
+    );
+  }
+
   // Cruise vs ceiling (BKN/OVC only) — hard stop if inside / within 500 ft below
-  const ceilingDecks = [
-    ...depWx.cloudDecks,
-    ...effectiveDestWeather.cloudDecks,
-    ...originWeather.cloudDecks,
-    ...destWeather.cloudDecks,
-  ].filter((d) => (d.coverage === "BKN" || d.coverage === "OVC") && d.baseMslFt > 0);
+  const ceilingDecks = corridorWx
+    .flatMap((s) => s.wx.cloudDecks)
+    .filter((d) => (d.coverage === "BKN" || d.coverage === "OVC") && d.baseMslFt > 0);
 
   let cruiseCeilingHit = false;
   for (const deck of ceilingDecks) {
@@ -573,15 +641,14 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
       "cruise-ceiling",
       "14 CFR 91.155(a)",
       "Cruise vs ceiling",
-      `Cruise ${cruiseAltitudeFt.toLocaleString()} ft stays ≥500 ft below any BKN/OVC ceiling along the corridor.`
+      `Cruise ${cruiseAltitudeFt.toLocaleString()} ft stays ≥500 ft below any BKN/OVC ceiling from dep, enroute, and arrival stations.`
     );
   }
 
   // FEW/SCT are NOT ceilings — caution only for Class E 500/1000 clearance
-  const scatterDecks = [
-    ...depWx.cloudDecks,
-    ...effectiveDestWeather.cloudDecks,
-  ].filter((d) => (d.coverage === "FEW" || d.coverage === "SCT") && d.baseMslFt > 0);
+  const scatterDecks = corridorWx
+    .flatMap((s) => s.wx.cloudDecks)
+    .filter((d) => (d.coverage === "FEW" || d.coverage === "SCT") && d.baseMslFt > 0);
 
   let scatterCaution = false;
   for (const deck of scatterDecks) {
@@ -614,14 +681,14 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
       "cruise-scatter",
       "14 CFR 91.155(a)",
       "Scattered/few cloud clearance",
-      `FEW/SCT layers present but cruise maintains Class E clearance margins. Reminder: FEW/SCT do not define the flight ceiling.`
+      `FEW/SCT layers present along the corridor but cruise maintains Class E clearance margins. Reminder: FEW/SCT do not define the flight ceiling.`
     );
   } else if (!scatterDecks.length) {
     pushPass(
       "cruise-scatter",
       "14 CFR 91.155(a)",
       "Scattered/few cloud clearance",
-      "No FEW/SCT layers in the departure/arrival sky groups used for this check."
+      "No FEW/SCT layers in the corridor sky groups (dep · enroute · arr) used for this check."
     );
   }
 
@@ -940,7 +1007,9 @@ export function autoOptimizeCruiseAltitude(
   origin: { elevationFt: number },
   aircraft: AircraftProfile,
   courseDeg = 90,
-  distanceNm = 30
+  distanceNm = 30,
+  /** Mid-route METAR/TAF stations — ceilings cap cruise like dep/arr */
+  enrouteStations: Array<{ elevationFt: number; weather: StationWeather }> = []
 ): number {
   const maxObstacleFt =
     terrainProfile.length > 0
@@ -957,6 +1026,7 @@ export function autoOptimizeCruiseAltitude(
   let optimal = nextVfrCruiseAltitude(minPractical, courseDeg);
 
   // Cap only on true ceilings (BKN/OVC). FEW/SCT must not pull cruise down.
+  // Use every sampled station along the corridor — not just dep/arr.
   const ceilingMslValues: number[] = [];
   const originCeil = officialCeilingAgl(originWeather);
   const destCeil = officialCeilingAgl(destWeather);
@@ -965,6 +1035,12 @@ export function autoOptimizeCruiseAltitude(
   }
   if (destCeil !== null) {
     ceilingMslValues.push(destCeil + destination.elevationFt);
+  }
+  for (const stop of enrouteStations) {
+    const ceil = officialCeilingAgl(stop.weather);
+    if (ceil !== null) {
+      ceilingMslValues.push(ceil + stop.elevationFt);
+    }
   }
   if (ceilingMslValues.length > 0) {
     const cloudCap = Math.min(...ceilingMslValues) - 500;

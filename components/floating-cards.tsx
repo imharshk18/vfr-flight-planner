@@ -516,8 +516,8 @@ export function BriefPortalModals({
 
           {ruleChecksSorted.length > 0 && (
             <div className="rule-check-list">
-              {ruleChecksSorted.map((r) => (
-                <article key={`${r.id}-${r.result}-${r.detail.slice(0, 24)}`} className={`rule-check ${r.result}`}>
+              {ruleChecksSorted.map((r, idx) => (
+                <article key={`${r.id}-${r.result}-${idx}`} className={`rule-check ${r.result}`}>
                   <header>
                     <b>{r.title}</b>
                     <em>{r.regulation}</em>

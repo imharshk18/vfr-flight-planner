@@ -165,7 +165,11 @@ export default function Page() {
               origin,
               aircraft,
               courseDeg,
-              routeNm
+              routeNm,
+              missionIntel.enroute.map((e) => ({
+                elevationFt: e.elevationFt,
+                weather: e.weather,
+              }))
             )
           : Math.max(3500, intake.cruiseAltitudeFt);
 
@@ -228,6 +232,11 @@ export default function Page() {
         destRunwayData: destRunway,
         pireps: missionIntel.pireps,
         advisories: missionIntel.advisories,
+        enrouteStations: missionIntel.enroute.map((e) => ({
+          icao: e.icao,
+          name: e.name,
+          weather: e.weather,
+        })),
         depRunway,
         arrRunway,
         profileTimeMin: flightProfile.totalTimeMin,

@@ -148,7 +148,15 @@ const ENROUTE_TAF_POOL: Array<{
   { icao: "KBNA", name: "Nashville", lat: 36.1245, lon: -86.6782, elevationFt: 599 },
   { icao: "KCLT", name: "Charlotte", lat: 35.214, lon: -80.9431, elevationFt: 748 },
   { icao: "KMIA", name: "Miami", lat: 25.7959, lon: -80.287, elevationFt: 8 },
+  { icao: "KFLL", name: "Fort Lauderdale", lat: 26.0726, lon: -80.1527, elevationFt: 9 },
+  { icao: "KPBI", name: "West Palm Beach", lat: 26.6832, lon: -80.0956, elevationFt: 19 },
+  { icao: "KHWO", name: "North Perry", lat: 25.9989, lon: -80.2407, elevationFt: 9 },
+  { icao: "KOPF", name: "Opa-Locka", lat: 25.907, lon: -80.2784, elevationFt: 8 },
+  { icao: "KTMB", name: "Miami Executive", lat: 25.6479, lon: -80.4328, elevationFt: 10 },
+  { icao: "KFXE", name: "Fort Lauderdale Exec", lat: 26.1973, lon: -80.1707, elevationFt: 13 },
   { icao: "KMCO", name: "Orlando", lat: 28.4312, lon: -81.3081, elevationFt: 96 },
+  { icao: "KTPA", name: "Tampa", lat: 27.9755, lon: -82.5332, elevationFt: 26 },
+  { icao: "KJAX", name: "Jacksonville", lat: 30.4941, lon: -81.6879, elevationFt: 30 },
   { icao: "KBOS", name: "Boston", lat: 42.3656, lon: -71.0096, elevationFt: 20 },
   { icao: "KJFK", name: "New York JFK", lat: 40.6413, lon: -73.7781, elevationFt: 13 },
   { icao: "KEWR", name: "Newark", lat: 40.6895, lon: -74.1745, elevationFt: 18 },
@@ -384,25 +392,46 @@ async function fetchEnrouteTafs(
   destination: AirportLocation,
   whenIso: string
 ): Promise<EnrouteStationIntel[]> {
-  const midLat = (origin.lat + destination.lat) / 2;
-  const midLon = (origin.lon + destination.lon) / 2;
   const routeNm = haversineNm(origin.lat, origin.lon, destination.lat, destination.lon);
-  // Wider corridor for short hops so enroute stations (KJVL, etc.) still sample.
-  const corridorNm = Math.min(70, Math.max(35, routeNm * 0.35));
+  // Wider corridor for short hops so coastal / metro stations still sample.
+  const corridorNm = Math.min(80, Math.max(40, routeNm * 0.4));
 
-  // Spread samples along the path — nearest stations within the corridor band.
-  const picks = ENROUTE_TAF_POOL.filter(
+  const candidates = ENROUTE_TAF_POOL.filter(
     (s) =>
       s.icao !== origin.icao &&
       s.icao !== destination.icao &&
       pointNearRoute(s.lat, s.lon, origin, destination, corridorNm)
-  )
-    .sort(
-      (a, b) =>
-        haversineNm(a.lat, a.lon, midLat, midLon) -
-        haversineNm(b.lat, b.lon, midLat, midLon)
-    )
-    .slice(0, 6);
+  ).map((s) => ({
+    ...s,
+    // Progress along route (0 at origin → 1 at dest) for even spacing
+    t: Math.min(
+      1,
+      haversineNm(origin.lat, origin.lon, s.lat, s.lon) / Math.max(1, routeNm)
+    ),
+  }));
+
+  candidates.sort((a, b) => a.t - b.t);
+
+  // Prefer stations spread along the corridor, not clustered at the midpoint.
+  const targets =
+    routeNm < 40
+      ? [0.25, 0.5, 0.75]
+      : routeNm < 120
+        ? [0.15, 0.35, 0.5, 0.65, 0.85]
+        : [0.1, 0.25, 0.4, 0.55, 0.7, 0.85];
+
+  const picks: typeof candidates = [];
+  for (const target of targets) {
+    const next = candidates
+      .filter((c) => !picks.some((p) => p.icao === c.icao))
+      .sort((a, b) => Math.abs(a.t - target) - Math.abs(b.t - target))[0];
+    if (next) picks.push(next);
+  }
+  // Fill remaining nearby stations up to 8
+  for (const c of candidates) {
+    if (picks.length >= 8) break;
+    if (!picks.some((p) => p.icao === c.icao)) picks.push(c);
+  }
 
   const results = await Promise.all(
     picks.map(async (s) => {
