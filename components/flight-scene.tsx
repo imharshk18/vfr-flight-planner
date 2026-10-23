@@ -241,6 +241,26 @@ function PathTube({
   );
 }
 
+/** Wings-level attitude along `direction` (avoids arbitrary roll from setFromUnitVectors). */
+function attitudeFromDirection(direction: THREE.Vector3, out = new THREE.Quaternion()) {
+  const forward = direction.clone();
+  if (forward.lengthSq() < 1e-10) return out.identity();
+  forward.normalize();
+
+  const worldUp = new THREE.Vector3(0, 1, 0);
+  // right = up × forward; when climbing steep, forward ≈ up so pick a fallback
+  const right = new THREE.Vector3().crossVectors(worldUp, forward);
+  if (right.lengthSq() < 1e-6) {
+    right.crossVectors(new THREE.Vector3(0, 0, 1), forward);
+  }
+  right.normalize();
+  const up = new THREE.Vector3().crossVectors(forward, right).normalize();
+
+  // Model nose is −Z → map local (+X,+Y,+Z) to (right, up, −forward)
+  const m = new THREE.Matrix4().makeBasis(right, up, forward.clone().negate());
+  return out.setFromRotationMatrix(m);
+}
+
 function Airplane({
   position,
   direction,
@@ -251,13 +271,11 @@ function Airplane({
   size: number;
 }) {
   const group = useRef<THREE.Group>(null);
+  const q = useRef(new THREE.Quaternion());
   useFrame(() => {
     if (!group.current) return;
     group.current.position.copy(position);
-    group.current.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 0, -1),
-      direction.clone().normalize()
-    );
+    group.current.quaternion.copy(attitudeFromDirection(direction, q.current));
   });
   return (
     <group ref={group} scale={size}>
