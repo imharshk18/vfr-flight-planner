@@ -43,8 +43,16 @@ export type HazardAdvisory = {
   hazard: string;
   severity: "info" | "caution" | "severe";
   raw: string;
+  /** ISO timestamp — product valid-from / start */
   validFrom?: string;
+  /** ISO timestamp — product expire / end */
   validTo?: string;
+  /** ISO timestamp — when the product was issued */
+  issuedAt?: string;
+  /** Altitude floor label, e.g. "SFC" or "12,000 ft" */
+  altitudeBase?: string;
+  /** Altitude top label, e.g. "UNL" or "FL340" */
+  altitudeTop?: string;
   intersectsRoute: boolean;
   summary: string;
 };
@@ -587,17 +595,119 @@ function advisoryCoversMission(
   return a0 <= missionToMs && a1 >= missionFromMs;
 }
 
-function formatGairmetRaw(g: Record<string, unknown>): string {
+function toIsoTime(value: unknown): string | undefined {
+  const ms = advisoryTimeMs(value);
+  if (ms == null) return undefined;
+  return new Date(ms).toISOString();
+}
+
+/** Format AWC times for the brief (UTC + local). */
+export function formatAdvisoryClock(iso?: string): string {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  const utc = new Date(t).toLocaleString("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+  });
+  const local = new Date(t).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${utc} · local ${local}`;
+}
+
+/**
+ * G-AIRMET base/top are usually hundreds of feet MSL ("120" → 12,000),
+ * or tokens like SFC / FZL. SIGMET altitudes often arrive as feet MSL.
+ */
+function formatAltitudeToken(raw: unknown, mode: "gairmet" | "sigmet" | "raw"): string | undefined {
+  if (raw == null || raw === "") return undefined;
+  const s = String(raw).trim().toUpperCase();
+  if (!s) return undefined;
+  if (/^(SFC|SURFACE|GND|GROUND)$/.test(s)) return "SFC";
+  if (/^(UNL|UNLTD|UNLIMITED)$/.test(s)) return "UNL";
+  if (s.startsWith("FL") && /^\d+$/.test(s.slice(2))) {
+    return `FL${s.slice(2)} (${(Number(s.slice(2)) * 100).toLocaleString()} ft)`;
+  }
+  const n = Number(s);
+  if (!Number.isFinite(n)) return s;
+  if (mode === "gairmet") {
+    // AWC G-AIRMET: values are typically in 100s of feet (120 = 12,000)
+    if (n <= 450) return `${(n * 100).toLocaleString()} ft`;
+    return `${n.toLocaleString()} ft`;
+  }
+  if (mode === "sigmet") {
+    if (n >= 1000) return `${n.toLocaleString()} ft`;
+    if (n <= 450) return `FL${String(Math.round(n)).padStart(3, "0")}`;
+    return `${n.toLocaleString()} ft`;
+  }
+  return s;
+}
+
+function formatAltitudeLayer(base?: string, top?: string): string {
+  if (!base && !top) return "Altitude · not specified";
+  return `Altitude ${base || "SFC"} – ${top || "UNL"}`;
+}
+
+function formatValidityBlock(opts: {
+  issuedAt?: string;
+  validFrom?: string;
+  validTo?: string;
+  altitudeBase?: string;
+  altitudeTop?: string;
+}): string {
+  const lines = [
+    `Issued  ${formatAdvisoryClock(opts.issuedAt)}`,
+    `Valid   ${formatAdvisoryClock(opts.validFrom)}`,
+    `Expires ${formatAdvisoryClock(opts.validTo)}`,
+    formatAltitudeLayer(opts.altitudeBase, opts.altitudeTop),
+  ];
+  return lines.join("\n");
+}
+
+function formatGairmetProduct(g: Record<string, unknown>): {
+  raw: string;
+  summary: string;
+  issuedAt?: string;
+  validFrom?: string;
+  validTo?: string;
+  altitudeBase?: string;
+  altitudeTop?: string;
+} {
   const due = g.due_to ? String(g.due_to) : "";
   const hazard = String(g.hazard || "G-AIRMET");
-  const tag = g.tag ? ` ${g.tag}` : "";
-  const base = g.base != null ? String(g.base) : "";
-  const top = g.top != null ? String(g.top) : "";
-  const layer = base || top ? ` ${base || "SFC"}–${top || "UNL"}` : "";
-  const raw = String(g.rawAirmet || g.raw || "").trim();
-  if (raw) return raw;
-  if (due) return `G-AIRMET${tag} ${hazard}${layer}: ${due}`;
-  return `G-AIRMET${tag} ${hazard}${layer}`;
+  const tag = g.tag ? String(g.tag) : "";
+  const altitudeBase = formatAltitudeToken(g.base, "gairmet");
+  const altitudeTop = formatAltitudeToken(g.top, "gairmet");
+  // Freeze level products carry fzlbase/fzltop
+  const fzlBase = formatAltitudeToken(g.fzlbase, "gairmet");
+  const fzlTop = formatAltitudeToken(g.fzltop, "gairmet");
+  const issuedAt = toIsoTime(g.issueTime ?? g.receiptTime);
+  const validFrom = toIsoTime(g.validTime ?? g.issueTime);
+  const validTo = toIsoTime(g.expireTime);
+  const layerBase = altitudeBase || fzlBase;
+  const layerTop = altitudeTop || fzlTop;
+  const validity = formatValidityBlock({
+    issuedAt,
+    validFrom,
+    validTo,
+    altitudeBase: layerBase,
+    altitudeTop: layerTop,
+  });
+  const headline = `G-AIRMET${tag ? ` ${tag}` : ""} ${hazard}`;
+  const upstream = String(g.rawAirmet || g.raw || "").trim();
+  const body = upstream || (due ? due : `${hazard} area`);
+  const raw = `${headline}\n${body}\n${validity}`;
+  const summary = `${headline} · ${formatAltitudeLayer(layerBase, layerTop)} · exp ${formatAdvisoryClock(validTo)}`;
+  return { raw, summary, issuedAt, validFrom, validTo, altitudeBase: layerBase, altitudeTop: layerTop };
 }
 
 export async function fetchRouteAdvisories(
@@ -625,18 +735,21 @@ export async function fetchRouteAdvisories(
         const coords = parseAdvisoryCoords(g.coords);
         const intersects = coords ? routeClipsPolygon(coords, origin, destination) : false;
         if (!intersects) continue; // drop regional noise that never clips the path
-        const raw = formatGairmetRaw(g);
+        const formatted = formatGairmetProduct(g);
         const severe = /IFR|ICE|MT_OBSC|MTN/i.test(hazard);
         out.push({
           id: `gair-${g.tag || g.receiptTime || out.length}-${hazard}`,
           product: "G-AIRMET",
           hazard,
           severity: severe ? "caution" : "info",
-          raw,
-          validFrom: g.validTime ? String(g.validTime) : undefined,
-          validTo: g.expireTime != null ? String(g.expireTime) : undefined,
+          raw: formatted.raw,
+          summary: formatted.summary,
+          issuedAt: formatted.issuedAt,
+          validFrom: formatted.validFrom,
+          validTo: formatted.validTo,
+          altitudeBase: formatted.altitudeBase,
+          altitudeTop: formatted.altitudeTop,
           intersectsRoute: true,
-          summary: raw,
         });
       }
     }
@@ -648,24 +761,52 @@ export async function fetchRouteAdvisories(
     const sigs = (await apiGet({ kind: "airsigmet", bbox })) as Array<Record<string, unknown>>;
     if (Array.isArray(sigs)) {
       for (const s of sigs.slice(0, 30)) {
-        if (!advisoryCoversMission(s.validTime, s.expireTime, missionFromMs, missionToMs)) {
+        const validFromRaw = s.validTimeFrom ?? s.validTime;
+        const validToRaw = s.validTimeTo ?? s.expireTime;
+        if (!advisoryCoversMission(validFromRaw, validToRaw, missionFromMs, missionToMs)) {
           continue;
         }
         const hazard = String(s.hazard || s.airSigmetType || "SIGMET");
-        const raw = String(s.rawSigmet || s.raw || `${hazard}`).trim();
         const coords = parseAdvisoryCoords(s.coords);
-        const intersects = coords
-          ? routeClipsPolygon(coords, origin, destination)
-          : false;
+        const intersects = coords ? routeClipsPolygon(coords, origin, destination) : false;
         if (!intersects) continue;
+
+        const issuedAt = toIsoTime(s.creationTime ?? s.issueTime ?? s.receiptTime);
+        const validFrom = toIsoTime(validFromRaw);
+        const validTo = toIsoTime(validToRaw);
+        const altitudeBase = formatAltitudeToken(
+          s.altitudeLow1 ?? s.altitudeLo1 ?? s.base,
+          "sigmet"
+        );
+        const altitudeTop = formatAltitudeToken(
+          s.altitudeHi1 ?? s.altitudeHigh1 ?? s.top,
+          "sigmet"
+        );
+        const upstream = String(s.rawAirSigmet || s.rawSigmet || s.raw || "").trim();
+        const validity = formatValidityBlock({
+          issuedAt,
+          validFrom,
+          validTo,
+          altitudeBase,
+          altitudeTop,
+        });
+        const headline = `SIGMET ${hazard}`;
+        const raw = upstream
+          ? `${headline}\n${upstream}\n${validity}`
+          : `${headline}\n${validity}`;
         out.push({
-          id: `sig-${s.airSigmetId || s.receiptTime || out.length}`,
+          id: `sig-${s.alphaChar || s.seriesId || s.receiptTime || out.length}`,
           product: "SIGMET",
           hazard,
           severity: "severe",
           raw,
+          summary: `${headline} · ${formatAltitudeLayer(altitudeBase, altitudeTop)} · exp ${formatAdvisoryClock(validTo)}`,
+          issuedAt,
+          validFrom,
+          validTo,
+          altitudeBase,
+          altitudeTop,
           intersectsRoute: true,
-          summary: raw.slice(0, 220) || `SIGMET ${hazard} intersects corridor`,
         });
       }
     }
@@ -677,7 +818,7 @@ export async function fetchRouteAdvisories(
     const cwas = (await apiGet({ kind: "cwa", bbox })) as Array<Record<string, unknown>>;
     if (Array.isArray(cwas)) {
       for (const c of cwas.slice(0, 20)) {
-        const raw = String(c.rawCwa || c.raw || "").trim();
+        const rawBody = String(c.rawCwa || c.raw || "").trim();
         const coords = parseAdvisoryCoords(c.coords);
         const intersects = coords
           ? routeClipsPolygon(coords, origin, destination)
@@ -689,14 +830,35 @@ export async function fetchRouteAdvisories(
               40
             );
         if (!intersects) continue;
+        const issuedAt = toIsoTime(c.issueTime ?? c.receiptTime);
+        const validFrom = toIsoTime(c.validTime ?? c.validTimeFrom ?? c.issueTime);
+        const validTo = toIsoTime(c.expireTime ?? c.validTimeTo);
+        const altitudeBase = formatAltitudeToken(c.base ?? c.altitudeLow1, "raw");
+        const altitudeTop = formatAltitudeToken(c.top ?? c.altitudeHi1, "raw");
+        const validity = formatValidityBlock({
+          issuedAt,
+          validFrom,
+          validTo,
+          altitudeBase,
+          altitudeTop,
+        });
+        const hazard = String(c.hazard || "CWA");
+        const raw = rawBody
+          ? `CWA ${hazard}\n${rawBody}\n${validity}`
+          : `CWA ${hazard}\n${validity}`;
         out.push({
           id: `cwa-${c.cwsu || c.receiptTime || out.length}`,
           product: "CWA",
-          hazard: String(c.hazard || "CWA"),
+          hazard,
           severity: "caution",
-          raw: raw || String(c.hazard || "CWA"),
+          raw,
+          summary: `CWA ${hazard} · exp ${formatAdvisoryClock(validTo)}`,
+          issuedAt,
+          validFrom,
+          validTo,
+          altitudeBase,
+          altitudeTop,
           intersectsRoute: true,
-          summary: raw ? `CWA: ${raw.slice(0, 180)}` : `CWA ${c.hazard || ""}`.trim(),
         });
       }
     }

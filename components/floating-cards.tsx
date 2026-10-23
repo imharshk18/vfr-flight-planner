@@ -12,6 +12,7 @@ import {
   fallbackSynopsis,
   formatTafWindow,
 } from "@/lib/briefing-narrative";
+import { formatAdvisoryClock } from "@/lib/aviation-intel";
 
 export type BriefSection = "adverse" | "synopsis" | "weather" | "forecast" | "charts" | "notams";
 
@@ -544,7 +545,7 @@ export function BriefPortalModals({
 
           {corridorProducts.length > 0 && (
             <>
-              <h3 className="brief-subhead">Corridor products (raw)</h3>
+              <h3 className="brief-subhead">Corridor products (valid times · altitudes)</h3>
               {corridorProducts.map((a) => (
                 <article
                   key={a.id}
@@ -553,6 +554,18 @@ export function BriefPortalModals({
                   <div className="finding-title">
                     {a.product} · {a.hazard}
                   </div>
+                  <p className="brief-meta" style={{ marginBottom: 6 }}>
+                    {[
+                      a.altitudeBase || a.altitudeTop
+                        ? `Alt ${a.altitudeBase || "SFC"}–${a.altitudeTop || "UNL"}`
+                        : "Alt not specified",
+                      a.issuedAt ? `Issued ${formatAdvisoryClock(a.issuedAt)}` : null,
+                      a.validFrom ? `Valid ${formatAdvisoryClock(a.validFrom)}` : null,
+                      a.validTo ? `Expires ${formatAdvisoryClock(a.validTo)}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
                   <code className="route-brief-raw">{a.raw || a.summary}</code>
                 </article>
               ))}

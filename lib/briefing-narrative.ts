@@ -173,6 +173,10 @@ function advisoryPlain(a: HazardAdvisory): string {
   if (a.product === "TFR") {
     return `${what}. ${a.summary}. Do not enter this airspace.`;
   }
+  // Prefer full product text (includes issued / valid / expires / altitude).
+  if (a.raw && /Issued|Valid|Expires|Altitude/i.test(a.raw)) {
+    return `${what}.\n${a.raw}`;
+  }
   return `${what}. ${a.summary}`;
 }
 

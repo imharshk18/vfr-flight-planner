@@ -800,6 +800,7 @@ export function runVfrRulesEngine(input: RulesEngineInput): VfrCorridorDecision 
 
   const sigmets = advisories.filter((a) => a.product === "SIGMET" && a.intersectsRoute);
   for (const s of sigmets.slice(0, 3)) {
+    // `raw` already carries issued / valid / expires / altitude from AWC fields
     const body = (s.raw || s.summary).trim();
     pushFail(
       "sigmet",
