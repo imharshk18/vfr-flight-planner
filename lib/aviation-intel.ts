@@ -581,6 +581,13 @@ function advisoryTimeMs(value: unknown): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
+/**
+ * Keep products that overlap the flight — or are still active now when the
+ * planned departure is near-term / already past (matches ForeFlight “live” brief).
+ * Previously, SIGMETs with null times always passed; once we parsed real
+ * validTimeFrom/To, a dep a few hours off the SIGMET window dropped convective
+ * NO-GOs that were still active on the corridor.
+ */
 function advisoryCoversMission(
   validFrom: unknown,
   expireTime: unknown,
@@ -590,9 +597,20 @@ function advisoryCoversMission(
   const from = advisoryTimeMs(validFrom);
   const to = advisoryTimeMs(expireTime);
   if (from == null && to == null) return true;
-  const a0 = from ?? missionFromMs - 6 * 3600_000;
-  const a1 = to ?? missionToMs + 6 * 3600_000;
-  return a0 <= missionToMs && a1 >= missionFromMs;
+
+  const now = Date.now();
+  const dep = Number.isFinite(missionFromMs) ? missionFromMs : now;
+  const arr = Number.isFinite(missionToMs) ? missionToMs : dep + 3 * 3600_000;
+
+  // Near-term (dep in the past or within 12h): also cover what's active *right now*
+  // so a 6pm local pickup still sees a live convective SIGMET ForeFlight shows.
+  const nearTerm = dep <= now + 12 * 3600_000;
+  const windowFrom = nearTerm ? Math.min(dep, now) : dep;
+  const windowTo = nearTerm ? Math.max(arr, now + 90 * 60_000) : arr;
+
+  const a0 = from ?? windowFrom - 6 * 3600_000;
+  const a1 = to ?? windowTo + 6 * 3600_000;
+  return a0 <= windowTo && a1 >= windowFrom;
 }
 
 function toIsoTime(value: unknown): string | undefined {
@@ -758,9 +776,13 @@ export async function fetchRouteAdvisories(
   }
 
   try {
-    const sigs = (await apiGet({ kind: "airsigmet", bbox })) as Array<Record<string, unknown>>;
+    // Wider bbox on short hops so convective outlook polygons aren't clipped away
+    const sigBbox = routeBbox(origin, destination, 1.4);
+    const sigs = (await apiGet({ kind: "airsigmet", bbox: sigBbox })) as Array<
+      Record<string, unknown>
+    >;
     if (Array.isArray(sigs)) {
-      for (const s of sigs.slice(0, 30)) {
+      for (const s of sigs.slice(0, 40)) {
         const validFromRaw = s.validTimeFrom ?? s.validTime;
         const validToRaw = s.validTimeTo ?? s.expireTime;
         if (!advisoryCoversMission(validFromRaw, validToRaw, missionFromMs, missionToMs)) {
